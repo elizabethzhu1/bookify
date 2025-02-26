@@ -24,8 +24,12 @@ export default function SpotifyAuth() {
         // If token needs refresh, handle it
         if (data.needsRefresh) {
           try {
-            const refreshResponse = await fetch("/api/refresh-token", {
-              method: "POST" // Change to POST method
+            // Use absolute URL with origin
+            const refreshResponse = await fetch(`${window.location.origin}/api/refresh-token`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json"
+              }
             })
             
             if (refreshResponse.ok) {

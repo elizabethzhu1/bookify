@@ -10,8 +10,15 @@ export async function POST(request: NextRequest) {
   
   if (!refreshToken) {
     return NextResponse.json(
-      { error: 'No refresh token available' },
+      { error: 'No refresh token found' },
       { status: 401 }
+    );
+  }
+  
+  if (!CLIENT_ID || !CLIENT_SECRET) {
+    return NextResponse.json(
+      { error: 'Missing Spotify credentials' },
+      { status: 500 }
     );
   }
   
@@ -30,18 +37,7 @@ export async function POST(request: NextRequest) {
       }),
     });
     
-    const responseText = await response.text();
-    let tokenData;
-    
-    try {
-      tokenData = JSON.parse(responseText);
-    } catch (e) {
-      console.error("Failed to parse token response:", responseText);
-      return NextResponse.json(
-        { error: 'Invalid response from Spotify', rawResponse: responseText },
-        { status: 500 }
-      );
-    }
+    const data = await response.json();
     
     if (!response.ok) {
       // If refresh fails, clear cookies and require re-authentication
@@ -49,38 +45,41 @@ export async function POST(request: NextRequest) {
       cookieStore.delete('spotify_refresh_token');
       cookieStore.delete('spotify_user');
       
-      console.error('Token refresh failed:', tokenData);
+      console.error('Token refresh failed:', data);
       return NextResponse.json(
-        { error: 'Failed to refresh token', details: tokenData },
+        { error: 'Failed to refresh token', details: data },
         { status: response.status }
       );
     }
     
     console.log("Token refresh successful");
     
-    // Update the access token
-    cookieStore.set('spotify_access_token', tokenData.access_token, {
+    // Set the new access token as a cookie
+    const cookieOptions = {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      maxAge: tokenData.expires_in,
+      maxAge: data.expires_in,
       path: '/',
-    });
+    };
     
-    // Update the refresh token if a new one was provided
-    if (tokenData.refresh_token) {
-      cookieStore.set('spotify_refresh_token', tokenData.refresh_token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+    const newResponse = NextResponse.json({ success: true });
+    
+    // Set cookies with the new tokens
+    newResponse.cookies.set('spotify_access_token', data.access_token, cookieOptions);
+    
+    // If a new refresh token was provided, update it
+    if (data.refresh_token) {
+      newResponse.cookies.set('spotify_refresh_token', data.refresh_token, {
+        ...cookieOptions,
         maxAge: 30 * 24 * 60 * 60, // 30 days
-        path: '/',
       });
     }
-    
-    return NextResponse.json({ success: true });
+
+    return newResponse;
   } catch (error) {
     console.error('Error refreshing token:', error);
     return NextResponse.json(
-      { error: 'Internal server error', message: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
