@@ -44,7 +44,7 @@ export async function POST(request: Request) {
     const userId = userData.id;
     
     // 2. Create a new playlist
-    const playlistName = `${bookTitle} Soundtrack`;
+    const playlistName = `Bookify: ${bookTitle}`;
     const playlistDescription = `A playlist inspired by "${bookTitle}"${bookAuthor ? ` by ${bookAuthor}` : ""}`;
     
     const createPlaylistResponse = await fetch(
@@ -70,36 +70,85 @@ export async function POST(request: Request) {
     const playlistData = await createPlaylistResponse.json();
     const playlistId = playlistData.id;
     
-    // 3. Search for tracks based on the book's theme
-    // In a real app, you would use AI to generate better search terms
-    const searchTerms = generateSearchTerms(bookTitle, bookGenre, bookDescription);
-    const trackUris = await searchForTracks(accessToken, searchTerms);
+    // 3. Generate search queries based on book information
+    const searchQueries = generateSearchQueries(bookTitle, bookAuthor, bookGenre, bookDescription);
     
-    // 4. Add tracks to the playlist
-    if (trackUris.length > 0) {
-      const addTracksResponse = await fetch(
-        `https://api.spotify.com/v1/playlists/${playlistId}/tracks`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            uris: trackUris,
-          }),
+    // 4. Search for tracks using multiple queries
+    const allTracks = [];
+    const tracksPerQuery = 5;
+    
+    for (const query of searchQueries) {
+      try {
+        const searchResponse = await fetch(
+          `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=${tracksPerQuery}`,
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          }
+        );
+        
+        if (searchResponse.ok) {
+          const searchData = await searchResponse.json();
+          const tracks = searchData.tracks.items;
+          
+          // Add tracks to our collection, avoiding duplicates
+          for (const track of tracks) {
+            if (!allTracks.some(t => t.uri === track.uri)) {
+              allTracks.push(track);
+            }
+          }
         }
-      );
-      
-      if (!addTracksResponse.ok) {
-        console.error("Failed to add tracks to playlist");
+      } catch (error) {
+        console.error(`Error searching for term "${query}":`, error);
       }
     }
     
-    return NextResponse.json({ 
-      success: true,
+    // Shuffle and limit tracks
+    const shuffledTracks = allTracks
+      .sort(() => Math.random() - 0.5)
+      .slice(0, 20);
+    
+    if (shuffledTracks.length === 0) {
+      throw new Error("No tracks found for the given book");
+    }
+    
+    // 5. Add tracks to the playlist
+    const trackUris = shuffledTracks.map(track => track.uri);
+    
+    const addTracksResponse = await fetch(
+      `https://api.spotify.com/v1/playlists/${playlistId}/tracks`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          uris: trackUris,
+        }),
+      }
+    );
+    
+    if (!addTracksResponse.ok) {
+      throw new Error("Failed to add tracks to playlist");
+    }
+    
+    // 6. Format the response with track details
+    const formattedTracks = shuffledTracks.map(track => ({
+      name: track.name,
+      artist: track.artists[0].name,
+      album: track.album.name,
+      image: track.album.images[0]?.url,
+      uri: track.uri,
+    }));
+    
+    return NextResponse.json({
       playlistId,
-      playlistUrl: playlistData.external_urls.spotify
+      name: playlistName,
+      external_url: playlistData.external_urls.spotify,
+      uri: playlistData.uri,
+      tracks: formattedTracks
     });
   } catch (error) {
     console.error("Error creating playlist:", error);
@@ -110,67 +159,62 @@ export async function POST(request: Request) {
   }
 }
 
-function generateSearchTerms(
-  bookTitle: string,
-  bookGenre?: string,
-  bookDescription?: string
+function generateSearchQueries(
+  title: string,
+  author?: string,
+  genre?: string,
+  description?: string
 ): string[] {
-  // This is a simplified approach - in a real app, you would use AI
-  // to generate more relevant search terms based on the book content
+  const queries = [];
   
-  const terms: string[] = [];
+  // Add title and author combination
+  if (author) {
+    queries.push(`${title} ${author}`);
+  }
   
-  // Add genre-based terms
-  if (bookGenre) {
-    if (bookGenre.toLowerCase().includes("romance")) {
-      terms.push("love songs", "romantic");
-    } else if (bookGenre.toLowerCase().includes("thriller") || bookGenre.toLowerCase().includes("mystery")) {
-      terms.push("suspense", "tension", "dark");
-    } else if (bookGenre.toLowerCase().includes("fantasy")) {
-      terms.push("epic", "magical", "fantasy soundtrack");
-    } else if (bookGenre.toLowerCase().includes("sci-fi") || bookGenre.toLowerCase().includes("science fiction")) {
-      terms.push("electronic", "futuristic", "space");
+  // Add genre-based queries
+  if (genre) {
+    const lowerGenre = genre.toLowerCase();
+    
+    if (lowerGenre.includes("romance")) {
+      queries.push("love songs", "romantic", `${genre} music`);
+    } else if (lowerGenre.includes("thriller") || lowerGenre.includes("mystery")) {
+      queries.push("suspense", "tension", "dark", `${genre} soundtrack`);
+    } else if (lowerGenre.includes("fantasy")) {
+      queries.push("epic", "magical", "fantasy soundtrack", `${genre} theme`);
+    } else if (lowerGenre.includes("sci-fi") || lowerGenre.includes("science fiction")) {
+      queries.push("electronic", "futuristic", "space", `${genre} soundtrack`);
     } else {
-      terms.push(bookGenre);
+      queries.push(genre);
     }
   }
   
-  // Add some generic terms
-  terms.push("soundtrack", "instrumental", bookTitle);
-  
-  return terms;
-}
-
-async function searchForTracks(accessToken: string, searchTerms: string[]): Promise<string[]> {
-  const trackUris: string[] = [];
-  const tracksPerTerm = 3; // Number of tracks to add per search term
-  
-  for (const term of searchTerms) {
-    try {
-      const response = await fetch(
-        `https://api.spotify.com/v1/search?q=${encodeURIComponent(term)}&type=track&limit=${tracksPerTerm}`,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        }
+  // Add description-based queries if available
+  if (description) {
+    // Extract key themes from description
+    const words = description
+      .toLowerCase()
+      .replace(/[^\w\s]/g, '')
+      .split(/\s+/)
+      .filter(word => 
+        word.length > 4 && 
+        !["about", "which", "there", "their", "other", "another"].includes(word)
       );
-      
-      if (response.ok) {
-        const data = await response.json();
-        const tracks = data.tracks.items;
-        
-        for (const track of tracks) {
-          if (!trackUris.includes(track.uri)) {
-            trackUris.push(track.uri);
-          }
-        }
-      }
-    } catch (error) {
-      console.error(`Error searching for term "${term}":`, error);
+    
+    // Get unique words
+    const uniqueWords = [...new Set(words)];
+    
+    // Take up to 3 significant words from description
+    const significantWords = uniqueWords.slice(0, 3);
+    
+    if (significantWords.length > 0) {
+      queries.push(significantWords.join(" "));
     }
   }
   
-  // Limit to 20 tracks maximum
-  return trackUris.slice(0, 20);
+  // Add some generic queries based on title
+  queries.push(`${title} soundtrack`, `${title} theme`, "instrumental");
+  
+  // Remove duplicates and return
+  return [...new Set(queries)];
 } 

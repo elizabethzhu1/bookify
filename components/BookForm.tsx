@@ -1,25 +1,39 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { Card } from "@/components/ui/card"
 import SpotifyAuth from "@/components/SpotifyAuth"
-import { Loader2 } from "lucide-react"
+import { Loader2, Search } from "lucide-react"
+import Image from "next/image"
+
+interface BookSuggestion {
+  id: string
+  title: string
+  author: string
+  description: string
+  genre: string
+  thumbnail: string
+}
 
 export default function BookForm() {
-  const [bookTitle, setBookTitle] = useState("")
-  const [bookAuthor, setBookAuthor] = useState("")
-  const [bookGenre, setBookGenre] = useState("")
-  const [additionalInfo, setAdditionalInfo] = useState("")
+  const [query, setQuery] = useState("")
+  const [suggestions, setSuggestions] = useState<BookSuggestion[]>([])
+  const [selectedBook, setSelectedBook] = useState<BookSuggestion | null>(null)
+  const [isSearching, setIsSearching] = useState(false)
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+  const [error, setError] = useState("")
   
+  // Generated content states
   const [bookDescription, setBookDescription] = useState("")
   const [playlistId, setPlaylistId] = useState("")
   const [bookRecommendations, setBookRecommendations] = useState<string[]>([])
   const [isGenerating, setIsGenerating] = useState(false)
-  const [error, setError] = useState("")
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   // Check if user is authenticated with Spotify
   useEffect(() => {
@@ -37,9 +51,87 @@ export default function BookForm() {
     checkAuth()
   }, [])
 
+  // Handle clicks outside the dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false)
+      }
+    }
+    
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+    }
+  }, [])
+
+  // Fetch book suggestions when query changes
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      if (query.length < 3) {
+        setSuggestions([])
+        return
+      }
+
+      setIsSearching(true)
+      setError("")
+      
+      try {
+        const response = await fetch(
+          `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=5`
+        )
+        
+        if (!response.ok) {
+          throw new Error("Failed to search books")
+        }
+        
+        const data = await response.json()
+        
+        if (data.items) {
+          const formattedSuggestions: BookSuggestion[] = data.items.map((item: any) => ({
+            id: item.id,
+            title: item.volumeInfo.title || "Unknown Title",
+            author: item.volumeInfo.authors ? item.volumeInfo.authors[0] : "Unknown Author",
+            description: item.volumeInfo.description || "",
+            genre: item.volumeInfo.categories ? item.volumeInfo.categories[0] : "",
+            thumbnail: item.volumeInfo.imageLinks?.thumbnail || ""
+          }))
+          
+          setSuggestions(formattedSuggestions)
+          setIsDropdownOpen(true)
+        } else {
+          setSuggestions([])
+        }
+      } catch (err) {
+        console.error("Search error:", err)
+        setError("Failed to search for books")
+      } finally {
+        setIsSearching(false)
+      }
+    }
+
+    const debounce = setTimeout(fetchSuggestions, 300)
+    return () => clearTimeout(debounce)
+  }, [query])
+
+  const handleSelectBook = (book: BookSuggestion) => {
+    setSelectedBook(book)
+    setQuery(book.title)
+    setIsDropdownOpen(false)
+  }
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newQuery = e.target.value
+    setQuery(newQuery)
+    if (selectedBook && newQuery !== selectedBook.title) {
+      setSelectedBook(null)
+    }
+    setIsDropdownOpen(newQuery.length >= 3)
+  }
+
   const handleGenerate = async () => {
-    if (!bookTitle) {
-      setError("Please enter a book title")
+    if (!selectedBook) {
+      setError("Please select a book first")
       return
     }
 
@@ -49,17 +141,17 @@ export default function BookForm() {
       setBookRecommendations([])
       setPlaylistId("")
       
-      // First, generate the book description
+      // Generate the book description
       const descriptionResponse = await fetch("/api/generate-description", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          title: bookTitle,
-          author: bookAuthor,
-          genre: bookGenre,
-          additionalInfo: additionalInfo,
+          title: selectedBook.title,
+          author: selectedBook.author,
+          genre: selectedBook.genre,
+          additionalInfo: selectedBook.description,
         }),
       })
 
@@ -79,9 +171,9 @@ export default function BookForm() {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              bookTitle,
-              bookAuthor,
-              bookGenre,
+              bookTitle: selectedBook.title,
+              bookAuthor: selectedBook.author,
+              bookGenre: selectedBook.genre,
               bookDescription: descriptionData.description,
             }),
           })
@@ -118,9 +210,9 @@ export default function BookForm() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          title: bookTitle,
-          author: bookAuthor,
-          genre: bookGenre,
+          title: selectedBook?.title,
+          author: selectedBook?.author,
+          genre: selectedBook?.genre,
         }),
       })
 
@@ -129,12 +221,12 @@ export default function BookForm() {
         setBookRecommendations(data.recommendations)
       } else {
         // Fallback to static recommendations if API fails
-        setBookRecommendations(getStaticRecommendations(bookGenre))
+        setBookRecommendations(getStaticRecommendations(selectedBook?.genre))
       }
     } catch (error) {
       console.error("Error generating recommendations:", error)
       // Fallback to static recommendations
-      setBookRecommendations(getStaticRecommendations(bookGenre))
+      setBookRecommendations(getStaticRecommendations(selectedBook?.genre))
     }
   }
 
@@ -187,75 +279,87 @@ export default function BookForm() {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-6xl mx-auto p-4">
-      {/* Left column - Book input form */}
+      {/* Left column - Book search */}
       <div className="space-y-4">
-        <h2 className="text-2xl font-bold">Book Details</h2>
+        <h2 className="text-2xl font-bold">Find a Book</h2>
         
-        <div className="space-y-2">
-          <label htmlFor="bookTitle" className="text-sm font-medium">
-            Book Title <span className="text-red-500">*</span>
-          </label>
-          <Input
-            id="bookTitle"
-            value={bookTitle}
-            onChange={(e) => setBookTitle(e.target.value)}
-            placeholder="Enter book title"
-            required
-          />
-        </div>
-        
-        <div className="space-y-2">
-          <label htmlFor="bookAuthor" className="text-sm font-medium">
-            Author
-          </label>
-          <Input
-            id="bookAuthor"
-            value={bookAuthor}
-            onChange={(e) => setBookAuthor(e.target.value)}
-            placeholder="Enter author name"
-          />
-        </div>
-        
-        <div className="space-y-2">
-          <label htmlFor="bookGenre" className="text-sm font-medium">
-            Genre
-          </label>
-          <Input
-            id="bookGenre"
-            value={bookGenre}
-            onChange={(e) => setBookGenre(e.target.value)}
-            placeholder="Enter book genre"
-          />
-        </div>
-        
-        <div className="space-y-2">
-          <label htmlFor="additionalInfo" className="text-sm font-medium">
-            Additional Information
-          </label>
-          <Textarea
-            id="additionalInfo"
-            value={additionalInfo}
-            onChange={(e) => setAdditionalInfo(e.target.value)}
-            placeholder="Enter any additional details about the book"
-            rows={4}
-          />
-        </div>
-        
-        <div className="flex items-center justify-between">
-          <Button 
-            onClick={handleGenerate} 
-            disabled={isGenerating || !bookTitle}
-            className="w-full"
-          >
-            {isGenerating ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Generating...
-              </>
-            ) : (
-              "Generate"
-            )}
-          </Button>
+        {/* Book Search Bar */}
+        <div className="relative" ref={dropdownRef}>
+          <div className="flex items-center space-x-2">
+            <div className="relative flex-grow">
+              <Input
+                type="text"
+                value={query}
+                onChange={handleInputChange}
+                placeholder="Search for a book..."
+                className="w-full bg-white text-black placeholder-gray-400 border-gray-300 focus:border-[#1DB954] transition-colors duration-200 pl-10"
+                ref={inputRef}
+              />
+              {selectedBook && selectedBook.thumbnail && (
+                <div className="absolute left-2 top-1/2 transform -translate-y-1/2">
+                  <img
+                    src={selectedBook.thumbnail}
+                    alt={selectedBook.title}
+                    width={24}
+                    height={36}
+                    className="rounded-sm"
+                  />
+                </div>
+              )}
+              {isSearching && (
+                <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                  <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                </div>
+              )}
+            </div>
+            <Button
+              onClick={handleGenerate}
+              disabled={isGenerating || !selectedBook}
+              className="bg-[#1DB954] hover:bg-[#1ed760] text-white"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                "Generate"
+              )}
+            </Button>
+          </div>
+          
+          {/* Search Results Dropdown */}
+          {isDropdownOpen && suggestions.length > 0 && (
+            <ul className="absolute z-10 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg mt-1 max-h-60 overflow-y-auto">
+              {suggestions.map((book) => (
+                <li
+                  key={book.id}
+                  className="flex items-center p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer transition-colors duration-200"
+                  onClick={() => handleSelectBook(book)}
+                >
+                  {book.thumbnail && (
+                    <img
+                      src={book.thumbnail}
+                      alt={book.title}
+                      width={40}
+                      height={60}
+                      className="mr-2 rounded-sm shadow-sm"
+                    />
+                  )}
+                  <div>
+                    <p className="font-medium text-black dark:text-white">{book.title}</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">{book.author}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          
+          {isDropdownOpen && suggestions.length === 0 && query.length >= 3 && !isSearching && (
+            <div className="absolute z-10 mt-1 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg p-4 text-center">
+              <p className="text-gray-600 dark:text-gray-300">No books found. Try a different search.</p>
+            </div>
+          )}
         </div>
         
         {error && <p className="text-red-500 text-sm">{error}</p>}

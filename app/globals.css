@@ -40,3 +40,13 @@ body {
   }
 }
 
+/* Add this to ensure black text in inputs */
+input, textarea {
+  color: black !important;
+}
+
+/* For dark mode, you might want to override this */
+.dark input, .dark textarea {
+  color: white !important;
+}
+
