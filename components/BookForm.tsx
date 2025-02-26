@@ -1,181 +1,339 @@
 "use client"
 
-import type React from "react"
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { useAppContext } from "@/context/AppContext"
-import Image from "next/image"
-
-interface BookSuggestion {
-  id: string
-  title: string
-  author: string
-  description: string
-  categories: string[]
-  thumbnail: string
-}
+import { Textarea } from "@/components/ui/textarea"
+import { Card } from "@/components/ui/card"
+import SpotifyAuth from "@/components/SpotifyAuth"
+import { Loader2 } from "lucide-react"
 
 export default function BookForm() {
-  const [query, setQuery] = useState("")
-  const [suggestions, setSuggestions] = useState<BookSuggestion[]>([])
-  const [selectedBook, setSelectedBook] = useState<BookSuggestion | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
-  const { setBookInfo, setPlaylistInfo } = useAppContext()
-  const dropdownRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [bookTitle, setBookTitle] = useState("")
+  const [bookAuthor, setBookAuthor] = useState("")
+  const [bookGenre, setBookGenre] = useState("")
+  const [additionalInfo, setAdditionalInfo] = useState("")
+  
+  const [bookDescription, setBookDescription] = useState("")
+  const [playlistId, setPlaylistId] = useState("")
+  const [bookRecommendations, setBookRecommendations] = useState<string[]>([])
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [error, setError] = useState("")
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
 
+  // Check if user is authenticated with Spotify
   useEffect(() => {
-    const fetchSuggestions = async () => {
-      if (query.length < 3) {
-        setSuggestions([])
-        return
-      }
-
-      setIsLoading(true)
-      setError(null)
+    const checkAuth = async () => {
       try {
-        const response = await fetch(`/api/book?query=${encodeURIComponent(query)}`)
-        if (!response.ok) {
-          throw new Error(`HTTP error! Status: ${response.status}`)
-        }
+        const response = await fetch("/api/check-auth")
         const data = await response.json()
-        setSuggestions(data)
-      } catch (error: any) {
-        console.error("Error fetching suggestions:", error)
-        setError("Failed to fetch book suggestions. Please try again.")
-      } finally {
-        setIsLoading(false)
+        setIsAuthenticated(data.isAuthenticated)
+      } catch (error) {
+        console.error("Error checking auth status:", error)
+        setIsAuthenticated(false)
       }
     }
 
-    const debounce = setTimeout(fetchSuggestions, 300)
-    return () => clearTimeout(debounce)
-  }, [query])
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsDropdownOpen(false)
-      }
-    }
-
-    document.addEventListener("mousedown", handleClickOutside)
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside)
-    }
+    checkAuth()
   }, [])
 
-  const handleSelectBook = (book: BookSuggestion) => {
-    setSelectedBook(book)
-    setQuery(book.title)
-    setIsDropdownOpen(false)
-  }
-
-  const handleGeneratePlaylist = async () => {
-    if (!selectedBook) return
-
-    setError(null)
-    setIsLoading(true)
-    setIsDropdownOpen(false)
+  const handleGenerate = async () => {
+    if (!bookTitle) {
+      setError("Please enter a book title")
+      return
+    }
 
     try {
-      const playlistResponse = await fetch("/api/playlist", {
+      setError("")
+      setIsGenerating(true)
+      setBookRecommendations([])
+      setPlaylistId("")
+      
+      // First, generate the book description
+      const descriptionResponse = await fetch("/api/generate-description", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(selectedBook),
+        body: JSON.stringify({
+          title: bookTitle,
+          author: bookAuthor,
+          genre: bookGenre,
+          additionalInfo: additionalInfo,
+        }),
       })
-      const playlistData = await playlistResponse.json()
 
-      if (!playlistResponse.ok) {
-        throw new Error(playlistData.error || "Failed to generate playlist")
+      if (!descriptionResponse.ok) {
+        throw new Error("Failed to generate book description")
       }
 
-      setBookInfo(selectedBook)
-      setPlaylistInfo(playlistData)
-    } catch (error: any) {
-      console.error("Error generating playlist:", error)
-      setError(error.message || "Failed to generate playlist. Please try again.")
+      const descriptionData = await descriptionResponse.json()
+      setBookDescription(descriptionData.description)
+
+      // If authenticated with Spotify, create a playlist
+      if (isAuthenticated) {
+        try {
+          const playlistResponse = await fetch("/api/create-playlist", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              bookTitle,
+              bookAuthor,
+              bookGenre,
+              bookDescription: descriptionData.description,
+            }),
+          })
+
+          if (playlistResponse.ok) {
+            const playlistData = await playlistResponse.json()
+            setPlaylistId(playlistData.playlistId)
+          } else {
+            // If playlist creation fails, fall back to book recommendations
+            await generateBookRecommendations()
+          }
+        } catch (playlistError) {
+          console.error("Playlist creation error:", playlistError)
+          // Fall back to book recommendations
+          await generateBookRecommendations()
+        }
+      } else {
+        // Not authenticated, generate book recommendations
+        await generateBookRecommendations()
+      }
+    } catch (err) {
+      console.error("Generation error:", err)
+      setError(err instanceof Error ? err.message : "An error occurred")
     } finally {
-      setIsLoading(false)
+      setIsGenerating(false)
     }
   }
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newQuery = e.target.value
-    setQuery(newQuery)
-    if (selectedBook && newQuery !== selectedBook.title) {
-      setSelectedBook(null)
+  const generateBookRecommendations = async () => {
+    try {
+      const recommendationsResponse = await fetch("/api/book-recommendations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: bookTitle,
+          author: bookAuthor,
+          genre: bookGenre,
+        }),
+      })
+
+      if (recommendationsResponse.ok) {
+        const data = await recommendationsResponse.json()
+        setBookRecommendations(data.recommendations)
+      } else {
+        // Fallback to static recommendations if API fails
+        setBookRecommendations(getStaticRecommendations(bookGenre))
+      }
+    } catch (error) {
+      console.error("Error generating recommendations:", error)
+      // Fallback to static recommendations
+      setBookRecommendations(getStaticRecommendations(bookGenre))
     }
-    setIsDropdownOpen(newQuery.length >= 3)
+  }
+
+  // Fallback static recommendations based on genre
+  const getStaticRecommendations = (genre?: string) => {
+    const lowerGenre = genre?.toLowerCase() || ""
+    
+    if (lowerGenre.includes("fantasy")) {
+      return [
+        "The Name of the Wind by Patrick Rothfuss",
+        "A Game of Thrones by George R.R. Martin",
+        "The Way of Kings by Brandon Sanderson",
+        "The Fifth Season by N.K. Jemisin",
+        "Mistborn by Brandon Sanderson"
+      ]
+    } else if (lowerGenre.includes("sci-fi") || lowerGenre.includes("science fiction")) {
+      return [
+        "Dune by Frank Herbert",
+        "The Three-Body Problem by Liu Cixin",
+        "Project Hail Mary by Andy Weir",
+        "Neuromancer by William Gibson",
+        "The Left Hand of Darkness by Ursula K. Le Guin"
+      ]
+    } else if (lowerGenre.includes("mystery") || lowerGenre.includes("thriller")) {
+      return [
+        "Gone Girl by Gillian Flynn",
+        "The Silent Patient by Alex Michaelides",
+        "The Girl with the Dragon Tattoo by Stieg Larsson",
+        "And Then There Were None by Agatha Christie",
+        "The Thursday Murder Club by Richard Osman"
+      ]
+    } else if (lowerGenre.includes("romance")) {
+      return [
+        "Pride and Prejudice by Jane Austen",
+        "The Hating Game by Sally Thorne",
+        "Red, White & Royal Blue by Casey McQuiston",
+        "Beach Read by Emily Henry",
+        "The Kiss Quotient by Helen Hoang"
+      ]
+    } else {
+      return [
+        "The Midnight Library by Matt Haig",
+        "Where the Crawdads Sing by Delia Owens",
+        "The Seven Husbands of Evelyn Hugo by Taylor Jenkins Reid",
+        "Educated by Tara Westover",
+        "Circe by Madeline Miller"
+      ]
+    }
   }
 
   return (
-    <div className="relative" ref={dropdownRef}>
-      <div className="flex items-center space-x-2">
-        <div className="relative flex-grow">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-6xl mx-auto p-4">
+      {/* Left column - Book input form */}
+      <div className="space-y-4">
+        <h2 className="text-2xl font-bold">Book Details</h2>
+        
+        <div className="space-y-2">
+          <label htmlFor="bookTitle" className="text-sm font-medium">
+            Book Title <span className="text-red-500">*</span>
+          </label>
           <Input
-            type="text"
-            value={query}
-            onChange={handleInputChange}
-            placeholder="Search for a book..."
-            className="w-full bg-white text-black placeholder-gray-400 border-gray-300 focus:border-[#1DB954] transition-colors duration-200 pl-10"
-            ref={inputRef}
+            id="bookTitle"
+            value={bookTitle}
+            onChange={(e) => setBookTitle(e.target.value)}
+            placeholder="Enter book title"
+            required
           />
-          {selectedBook && selectedBook.thumbnail && (
-            <Image
-              src={selectedBook.thumbnail || "/placeholder.svg"}
-              alt={selectedBook.title}
-              width={24}
-              height={36}
-              className="absolute left-2 top-1/2 transform -translate-y-1/2 rounded-sm"
-            />
-          )}
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          className="bg-green-400 hover:bg-green-500 text-white border-none transition-colors duration-200"
-          onClick={handleGeneratePlaylist}
-          disabled={!selectedBook || isLoading}
-        >
-          {isLoading ? "Generating..." : "Generate"}
-        </Button>
+        
+        <div className="space-y-2">
+          <label htmlFor="bookAuthor" className="text-sm font-medium">
+            Author
+          </label>
+          <Input
+            id="bookAuthor"
+            value={bookAuthor}
+            onChange={(e) => setBookAuthor(e.target.value)}
+            placeholder="Enter author name"
+          />
+        </div>
+        
+        <div className="space-y-2">
+          <label htmlFor="bookGenre" className="text-sm font-medium">
+            Genre
+          </label>
+          <Input
+            id="bookGenre"
+            value={bookGenre}
+            onChange={(e) => setBookGenre(e.target.value)}
+            placeholder="Enter book genre"
+          />
+        </div>
+        
+        <div className="space-y-2">
+          <label htmlFor="additionalInfo" className="text-sm font-medium">
+            Additional Information
+          </label>
+          <Textarea
+            id="additionalInfo"
+            value={additionalInfo}
+            onChange={(e) => setAdditionalInfo(e.target.value)}
+            placeholder="Enter any additional details about the book"
+            rows={4}
+          />
+        </div>
+        
+        <div className="flex items-center justify-between">
+          <Button 
+            onClick={handleGenerate} 
+            disabled={isGenerating || !bookTitle}
+            className="w-full"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Generating...
+              </>
+            ) : (
+              "Generate"
+            )}
+          </Button>
+        </div>
+        
+        {error && <p className="text-red-500 text-sm">{error}</p>}
+        
+        <div className="mt-4">
+          <SpotifyAuth />
+        </div>
       </div>
-      {isLoading && <p className="mt-2 text-[#B3B3B3]">Loading...</p>}
-      {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
-      {isDropdownOpen && suggestions.length > 0 && (
-        <ul className="absolute z-10 w-full bg-[#282828] border border-[#404040] rounded-md shadow-lg mt-1 max-h-60 overflow-y-auto">
-          {suggestions.map((book) => (
-            <li
-              key={book.id}
-              className="flex items-center p-2 hover:bg-[#404040] cursor-pointer transition-colors duration-200"
-              onClick={() => handleSelectBook(book)}
-            >
-              {book.thumbnail && (
-                <Image
-                  src={book.thumbnail || "/placeholder.svg"}
-                  alt={book.title}
-                  width={40}
-                  height={60}
-                  className="mr-2 rounded-sm shadow-sm"
-                />
-              )}
-              <div>
-                <p className="font-semibold text-white">{book.title}</p>
-                <p className="text-sm text-[#B3B3B3]">{book.author}</p>
+      
+      {/* Right column - Generated content */}
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold">Generated Content</h2>
+        
+        {/* Book description card */}
+        <Card className="p-4">
+          <h3 className="text-lg font-semibold mb-2">Book Description</h3>
+          {isGenerating ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+            </div>
+          ) : bookDescription ? (
+            <div className="prose max-w-none">
+              {bookDescription.split('\n').map((paragraph, i) => (
+                <p key={i} className="mb-4">{paragraph}</p>
+              ))}
+            </div>
+          ) : (
+            <p className="text-gray-500 italic">
+              Your generated book description will appear here.
+            </p>
+          )}
+        </Card>
+        
+        {/* Spotify playlist or book recommendations */}
+        <Card className="p-4">
+          {isAuthenticated && playlistId ? (
+            <>
+              <h3 className="text-lg font-semibold mb-2">Book Playlist</h3>
+              <div className="aspect-video">
+                <iframe
+                  src={`https://open.spotify.com/embed/playlist/${playlistId}`}
+                  width="100%"
+                  height="380"
+                  frameBorder="0"
+                  allowTransparency={true}
+                  allow="encrypted-media"
+                  className="rounded-md"
+                ></iframe>
               </div>
-            </li>
-          ))}
-        </ul>
-      )}
-      {!isLoading && !error && suggestions.length === 0 && query.length >= 3 && (
-        <p className="mt-2 text-sm text-[#B3B3B3]">No books found. Try a different search.</p>
-      )}
+            </>
+          ) : (
+            <>
+              <h3 className="text-lg font-semibold mb-2">Book Recommendations</h3>
+              {isGenerating ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+                </div>
+              ) : bookRecommendations.length > 0 ? (
+                <ul className="list-disc pl-5 space-y-2">
+                  {bookRecommendations.map((book, index) => (
+                    <li key={index} className="text-gray-800 dark:text-gray-200">
+                      {book}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-gray-500 italic">
+                  {isAuthenticated ? (
+                    "Connect with Spotify and click Generate to create a custom playlist for your book."
+                  ) : (
+                    "Click Generate to see book recommendations based on your selection."
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </Card>
+      </div>
     </div>
   )
 }

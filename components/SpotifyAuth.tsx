@@ -24,26 +24,25 @@ export default function SpotifyAuth() {
         // If token needs refresh, handle it
         if (data.needsRefresh) {
           try {
-            // Use absolute URL with origin
-            const refreshResponse = await fetch(`${window.location.origin}/api/refresh-token`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json"
-              }
-            })
+            // Create a form and submit it
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '/api/refresh-token';
+            document.body.appendChild(form);
+            form.submit();
+            document.body.removeChild(form);
             
-            if (refreshResponse.ok) {
-              // Check auth again after refresh
-              const refreshCheckResponse = await fetch("/api/check-auth")
-              const refreshData = await refreshCheckResponse.json()
-              setIsAuthenticated(refreshData.isAuthenticated)
-            } else {
-              // If refresh fails, user needs to re-authenticate
-              setIsAuthenticated(false)
-            }
+            // Wait a moment and then check auth again
+            setTimeout(async () => {
+              const refreshCheckResponse = await fetch("/api/check-auth");
+              const refreshData = await refreshCheckResponse.json();
+              setIsAuthenticated(refreshData.isAuthenticated);
+              setIsLoading(false);
+            }, 1000);
+            return; // Exit early to prevent setIsLoading(false)
           } catch (refreshError) {
-            console.error("Error refreshing token:", refreshError)
-            setIsAuthenticated(false)
+            console.error("Error refreshing token:", refreshError);
+            setIsAuthenticated(false);
           }
         }
       } catch (error) {
