@@ -10,11 +10,8 @@ export async function GET() {
       throw new Error("Spotify client ID not configured");
     }
     
-    // Get the redirect URI
-    const redirectUri = process.env.SPOTIFY_REDIRECT_URI || 
-      (process.env.VERCEL_URL 
-        ? `https://${process.env.VERCEL_URL}/callback` 
-        : "http://localhost:3000/callback");
+    // Always use the production redirect URI
+    const redirectUri = "https://bookify-v1.vercel.app/callback";
     
     // Generate a random state value for security
     const state = generateRandomString(16);
@@ -25,7 +22,7 @@ export async function GET() {
     // Store the code verifier in a cookie for later use
     const cookieOptions = {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: true,
       sameSite: "lax" as const,
       path: "/",
       maxAge: 60 * 10, // 10 minutes
