@@ -1,91 +1,89 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
-
-// Use the exact same redirect URI as in SpotifyAuth.tsx
-const REDIRECT_URI = "https://bookify-v1.vercel.app/callback"
+import { useRouter, useSearchParams } from "next/navigation"
+import { Loader2 } from "lucide-react"
 
 export default function CallbackPage() {
+  const [status, setStatus] = useState("Processing your Spotify authorization...")
+  const [error, setError] = useState<string | null>(null)
   const router = useRouter()
-  const [status, setStatus] = useState("Processing authentication...")
+  const searchParams = useSearchParams()
+
+  // Get the base URL for API calls
+  const getBaseUrl = () => {
+    if (typeof window !== 'undefined') {
+      return window.location.origin;
+    }
+    return '';
+  };
 
   useEffect(() => {
-    const handleCallback = async () => {
+    const processAuth = async () => {
       try {
-        // Get the authorization code and state from URL
-        const urlParams = new URLSearchParams(window.location.search)
-        const code = urlParams.get("code")
-        const state = urlParams.get("state")
-        const error = urlParams.get("error")
+        const code = searchParams.get("code")
+        const state = searchParams.get("state")
+        const error = searchParams.get("error")
 
-        // Check for errors
         if (error) {
-          setStatus(`Authentication error: ${error}`)
-          setTimeout(() => router.push("/"), 3000)
+          setError(`Spotify authorization error: ${error}`)
           return
         }
 
-        // Verify state matches what we stored
-        const storedState = localStorage.getItem("spotify_auth_state")
-        if (state !== storedState) {
-          setStatus("State verification failed. Possible CSRF attack.")
-          setTimeout(() => router.push("/"), 3000)
+        if (!code) {
+          setError("No authorization code received from Spotify")
           return
         }
 
-        // Get code verifier from localStorage
-        const codeVerifier = localStorage.getItem("code_verifier")
-        if (!code || !codeVerifier) {
-          setStatus("Missing authentication parameters.")
-          setTimeout(() => router.push("/"), 3000)
-          return
-        }
-
-        // Exchange code for tokens
-        const response = await fetch(`${window.location.origin}/api/spotify-callback`, {
+        // Exchange the code for tokens
+        const response = await fetch(`${getBaseUrl()}/api/spotify-callback`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            code,
-            codeVerifier,
-            redirectUri: REDIRECT_URI, // Must match the one used in authorization
-          }),
+          body: JSON.stringify({ code, state }),
         })
 
+        const data = await response.json()
+
         if (!response.ok) {
-          const errorData = await response.json()
-          throw new Error(errorData.error || "Failed to exchange code for tokens")
+          throw new Error(data.error || "Failed to authenticate with Spotify")
         }
 
-        // Clean up localStorage
-        localStorage.removeItem("code_verifier")
-        localStorage.removeItem("spotify_auth_state")
-
-        setStatus("Authentication successful! Redirecting...")
+        setStatus("Successfully connected with Spotify! Redirecting...")
         
-        // Redirect to home or dashboard
-        setTimeout(() => router.push("/"), 1500)
-      } catch (error) {
-        console.error("Callback error:", error)
-        setStatus(`Authentication failed: ${error instanceof Error ? error.message : "Unknown error"}`)
-        setTimeout(() => router.push("/"), 3000)
+        // Redirect back to the main page
+        setTimeout(() => {
+          router.push("/")
+        }, 1500)
+      } catch (err) {
+        console.error("Callback error:", err)
+        setError(err instanceof Error ? err.message : "An unknown error occurred")
       }
     }
 
-    handleCallback()
-  }, [router])
+    processAuth()
+  }, [searchParams, router])
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md rounded-lg border border-gray-200 bg-white p-6 shadow-md dark:border-gray-700 dark:bg-gray-800">
-        <h1 className="mb-4 text-xl font-semibold text-gray-900 dark:text-white">
-          Spotify Authentication
-        </h1>
-        <p className="text-gray-700 dark:text-gray-300">{status}</p>
-      </div>
+    <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
+      {error ? (
+        <div className="text-red-500 mb-4">
+          <p className="text-xl font-bold">Error</p>
+          <p>{error}</p>
+          <button
+            onClick={() => router.push("/")}
+            className="mt-4 px-4 py-2 bg-[#1DB954] text-white rounded-md hover:bg-[#1ed760] transition-colors"
+          >
+            Return to Home
+          </button>
+        </div>
+      ) : (
+        <>
+          <Loader2 className="h-12 w-12 animate-spin text-[#1DB954] mb-4" />
+          <p className="text-xl">{status}</p>
+        </>
+      )}
     </div>
   )
 }

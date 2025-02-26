@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
 import SpotifyAuth from "@/components/SpotifyAuth"
-import { Loader2, Search } from "lucide-react"
+import { Loader2, Search, Music } from "lucide-react"
 import Image from "next/image"
 
 interface BookSuggestion {
@@ -15,6 +15,22 @@ interface BookSuggestion {
   description: string
   genre: string
   thumbnail: string
+}
+
+interface Track {
+  name: string
+  artist: string
+  album: string
+  image?: string
+  uri: string
+}
+
+interface PlaylistData {
+  playlistId: string
+  name: string
+  external_url: string
+  uri: string
+  tracks: Track[]
 }
 
 export default function BookForm() {
@@ -27,7 +43,7 @@ export default function BookForm() {
   
   // Generated content states
   const [bookDescription, setBookDescription] = useState("")
-  const [playlistId, setPlaylistId] = useState("")
+  const [playlistData, setPlaylistData] = useState<PlaylistData | null>(null)
   const [bookRecommendations, setBookRecommendations] = useState<string[]>([])
   const [isGenerating, setIsGenerating] = useState(false)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -35,11 +51,19 @@ export default function BookForm() {
   const dropdownRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Get the base URL for API calls (works in both production and development)
+  const getBaseUrl = () => {
+    if (typeof window !== 'undefined') {
+      return window.location.origin;
+    }
+    return '';
+  };
+
   // Check if user is authenticated with Spotify
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const response = await fetch("/api/check-auth")
+        const response = await fetch(`${getBaseUrl()}/api/check-auth`)
         const data = await response.json()
         setIsAuthenticated(data.isAuthenticated)
       } catch (error) {
@@ -68,8 +92,7 @@ export default function BookForm() {
   // Fetch book suggestions when query changes
   useEffect(() => {
     const fetchSuggestions = async () => {
-      if (query.length < 3) {
-        setSuggestions([])
+      if (query.length < 3 || !isDropdownOpen) {
         return
       }
 
@@ -98,7 +121,6 @@ export default function BookForm() {
           }))
           
           setSuggestions(formattedSuggestions)
-          setIsDropdownOpen(true)
         } else {
           setSuggestions([])
         }
@@ -112,7 +134,7 @@ export default function BookForm() {
 
     const debounce = setTimeout(fetchSuggestions, 300)
     return () => clearTimeout(debounce)
-  }, [query])
+  }, [query, isDropdownOpen])
 
   const handleSelectBook = (book: BookSuggestion) => {
     setSelectedBook(book)
@@ -123,10 +145,26 @@ export default function BookForm() {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newQuery = e.target.value
     setQuery(newQuery)
+    
+    // If user changes the text after selecting a book, clear the selection
     if (selectedBook && newQuery !== selectedBook.title) {
       setSelectedBook(null)
     }
-    setIsDropdownOpen(newQuery.length >= 3)
+    
+    // Only open dropdown if there's enough text and user is actively typing
+    if (newQuery.length >= 3) {
+      setIsDropdownOpen(true)
+    } else {
+      setIsDropdownOpen(false)
+    }
+  }
+  
+  // Handle input focus to show dropdown
+  const handleInputFocus = () => {
+    // Only show dropdown if there's enough text to search
+    if (query.length >= 3) {
+      setIsDropdownOpen(true)
+    }
   }
 
   const handleGenerate = async () => {
@@ -135,37 +173,20 @@ export default function BookForm() {
       return
     }
 
+    setIsGenerating(true)
+    setError("")
+    setBookDescription("")
+    setPlaylistData(null)
+    setBookRecommendations([])
+
     try {
-      setError("")
-      setIsGenerating(true)
-      setBookRecommendations([])
-      setPlaylistId("")
-      
-      // Generate the book description
-      const descriptionResponse = await fetch("/api/generate-description", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          title: selectedBook.title,
-          author: selectedBook.author,
-          genre: selectedBook.genre,
-          additionalInfo: selectedBook.description,
-        }),
-      })
-
-      if (!descriptionResponse.ok) {
-        throw new Error("Failed to generate book description")
-      }
-
-      const descriptionData = await descriptionResponse.json()
-      setBookDescription(descriptionData.description)
+      // Use the book description directly from the Google Books API
+      setBookDescription(selectedBook.description || "No description available for this book.")
 
       // If authenticated with Spotify, create a playlist
       if (isAuthenticated) {
         try {
-          const playlistResponse = await fetch("/api/create-playlist", {
+          const playlistResponse = await fetch(`${getBaseUrl()}/api/create-playlist`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -174,13 +195,13 @@ export default function BookForm() {
               bookTitle: selectedBook.title,
               bookAuthor: selectedBook.author,
               bookGenre: selectedBook.genre,
-              bookDescription: descriptionData.description,
+              bookDescription: selectedBook.description,
             }),
           })
 
           if (playlistResponse.ok) {
             const playlistData = await playlistResponse.json()
-            setPlaylistId(playlistData.playlistId)
+            setPlaylistData(playlistData)
           } else {
             // If playlist creation fails, fall back to book recommendations
             await generateBookRecommendations()
@@ -191,8 +212,33 @@ export default function BookForm() {
           await generateBookRecommendations()
         }
       } else {
-        // Not authenticated, generate book recommendations
-        await generateBookRecommendations()
+        // Not authenticated, generate track suggestions
+        try {
+          const suggestResponse = await fetch(`${getBaseUrl()}/api/suggest-tracks`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              bookTitle: selectedBook.title,
+              bookAuthor: selectedBook.author,
+              bookGenre: selectedBook.genre,
+              bookDescription: selectedBook.description,
+            }),
+          })
+
+          if (suggestResponse.ok) {
+            const suggestData = await suggestResponse.json()
+            setPlaylistData(suggestData)
+          } else {
+            // If track suggestions fail, fall back to book recommendations
+            await generateBookRecommendations()
+          }
+        } catch (suggestError) {
+          console.error("Track suggestion error:", suggestError)
+          // Fall back to book recommendations
+          await generateBookRecommendations()
+        }
       }
     } catch (err) {
       console.error("Generation error:", err)
@@ -204,7 +250,7 @@ export default function BookForm() {
 
   const generateBookRecommendations = async () => {
     try {
-      const recommendationsResponse = await fetch("/api/book-recommendations", {
+      const recommendationsResponse = await fetch(`${getBaseUrl()}/api/book-recommendations`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -216,23 +262,21 @@ export default function BookForm() {
         }),
       })
 
-      if (recommendationsResponse.ok) {
-        const data = await recommendationsResponse.json()
-        setBookRecommendations(data.recommendations)
-      } else {
-        // Fallback to static recommendations if API fails
-        setBookRecommendations(getStaticRecommendations(selectedBook?.genre))
+      if (!recommendationsResponse.ok) {
+        throw new Error("Failed to generate book recommendations")
       }
+
+      const recommendationsData = await recommendationsResponse.json()
+      setBookRecommendations(recommendationsData.recommendations)
     } catch (error) {
       console.error("Error generating recommendations:", error)
       // Fallback to static recommendations
-      setBookRecommendations(getStaticRecommendations(selectedBook?.genre))
+      setBookRecommendations(getStaticRecommendations(selectedBook?.genre || ""))
     }
   }
 
-  // Fallback static recommendations based on genre
-  const getStaticRecommendations = (genre?: string) => {
-    const lowerGenre = genre?.toLowerCase() || ""
+  const getStaticRecommendations = (genre: string): string[] => {
+    const lowerGenre = genre.toLowerCase();
     
     if (lowerGenre.includes("fantasy")) {
       return [
@@ -241,7 +285,7 @@ export default function BookForm() {
         "The Way of Kings by Brandon Sanderson",
         "The Fifth Season by N.K. Jemisin",
         "Mistborn by Brandon Sanderson"
-      ]
+      ];
     } else if (lowerGenre.includes("sci-fi") || lowerGenre.includes("science fiction")) {
       return [
         "Dune by Frank Herbert",
@@ -249,7 +293,7 @@ export default function BookForm() {
         "Project Hail Mary by Andy Weir",
         "Neuromancer by William Gibson",
         "The Left Hand of Darkness by Ursula K. Le Guin"
-      ]
+      ];
     } else if (lowerGenre.includes("mystery") || lowerGenre.includes("thriller")) {
       return [
         "Gone Girl by Gillian Flynn",
@@ -257,7 +301,7 @@ export default function BookForm() {
         "The Girl with the Dragon Tattoo by Stieg Larsson",
         "And Then There Were None by Agatha Christie",
         "The Thursday Murder Club by Richard Osman"
-      ]
+      ];
     } else if (lowerGenre.includes("romance")) {
       return [
         "Pride and Prejudice by Jane Austen",
@@ -265,21 +309,21 @@ export default function BookForm() {
         "Red, White & Royal Blue by Casey McQuiston",
         "Beach Read by Emily Henry",
         "The Kiss Quotient by Helen Hoang"
-      ]
+      ];
     } else {
       return [
-        "The Midnight Library by Matt Haig",
-        "Where the Crawdads Sing by Delia Owens",
+        "The Night Circus by Erin Morgenstern",
         "The Seven Husbands of Evelyn Hugo by Taylor Jenkins Reid",
+        "Where the Crawdads Sing by Delia Owens",
         "Educated by Tara Westover",
         "Circe by Madeline Miller"
-      ]
+      ];
     }
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-6xl mx-auto p-4">
-      {/* Left column - Book search */}
+    <div className="w-full max-w-6xl mx-auto p-4 space-y-8">
+      {/* Top section - Book search (full width) */}
       <div className="space-y-4">
         <h2 className="text-2xl font-bold">Find a Book</h2>
         
@@ -287,25 +331,26 @@ export default function BookForm() {
         <div className="relative" ref={dropdownRef}>
           <div className="flex items-center space-x-2">
             <div className="relative flex-grow">
-              <Input
-                type="text"
-                value={query}
-                onChange={handleInputChange}
-                placeholder="Search for a book..."
-                className="w-full bg-white text-black placeholder-gray-400 border-gray-300 focus:border-[#1DB954] transition-colors duration-200 pl-10"
-                ref={inputRef}
-              />
-              {selectedBook && selectedBook.thumbnail && (
-                <div className="absolute left-2 top-1/2 transform -translate-y-1/2">
+              <div className="relative">
+                <Input
+                  type="text"
+                  value={query}
+                  onChange={handleInputChange}
+                  onFocus={handleInputFocus}
+                  placeholder="Search for a book..."
+                  className="w-full bg-white text-black placeholder-gray-400 border-gray-300 focus:border-[#1DB954] transition-colors duration-200 pl-10"
+                  ref={inputRef}
+                />
+                {selectedBook && selectedBook.thumbnail && (
                   <img
                     src={selectedBook.thumbnail}
                     alt={selectedBook.title}
                     width={24}
                     height={36}
-                    className="rounded-sm"
+                    className="absolute left-2 top-1/2 transform -translate-y-1/2 rounded-sm"
                   />
-                </div>
-              )}
+                )}
+              </div>
               {isSearching && (
                 <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
                   <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
@@ -328,7 +373,7 @@ export default function BookForm() {
             </Button>
           </div>
           
-          {/* Search Results Dropdown */}
+          {/* Search Results Dropdown - Only show when dropdown is open */}
           {isDropdownOpen && suggestions.length > 0 && (
             <ul className="absolute z-10 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg mt-1 max-h-60 overflow-y-auto">
               {suggestions.map((book) => (
@@ -355,6 +400,7 @@ export default function BookForm() {
             </ul>
           )}
           
+          {/* No results message - Only show when dropdown is open */}
           {isDropdownOpen && suggestions.length === 0 && query.length >= 3 && !isSearching && (
             <div className="absolute z-10 mt-1 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg p-4 text-center">
               <p className="text-gray-600 dark:text-gray-300">No books found. Try a different search.</p>
@@ -364,80 +410,117 @@ export default function BookForm() {
         
         {error && <p className="text-red-500 text-sm">{error}</p>}
         
-        <div className="mt-4">
-          <SpotifyAuth />
+        <div className="flex justify-between items-center">
+          {selectedBook && (
+            <div className="flex items-center space-x-2">
+              <p className="text-sm text-gray-300">Selected: </p>
+              <p className="text-sm font-medium">{selectedBook.title} by {selectedBook.author}</p>
+            </div>
+          )}
         </div>
       </div>
       
-      {/* Right column - Generated content */}
-      <div className="space-y-6">
-        <h2 className="text-2xl font-bold">Generated Content</h2>
-        
-        {/* Book description card */}
-        <Card className="p-4">
-          <h3 className="text-lg font-semibold mb-2">Book Description</h3>
-          {isGenerating ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-            </div>
-          ) : bookDescription ? (
-            <div className="prose max-w-none">
-              {bookDescription.split('\n').map((paragraph, i) => (
-                <p key={i} className="mb-4">{paragraph}</p>
-              ))}
-            </div>
-          ) : (
-            <p className="text-gray-500 italic">
-              Your generated book description will appear here.
-            </p>
-          )}
-        </Card>
-        
-        {/* Spotify playlist or book recommendations */}
-        <Card className="p-4">
-          {isAuthenticated && playlistId ? (
-            <>
-              <h3 className="text-lg font-semibold mb-2">Book Playlist</h3>
-              <div className="aspect-video">
-                <iframe
-                  src={`https://open.spotify.com/embed/playlist/${playlistId}`}
-                  width="100%"
-                  height="380"
-                  frameBorder="0"
-                  allowTransparency={true}
-                  allow="encrypted-media"
-                  className="rounded-md"
-                ></iframe>
+      {/* Bottom section - Generated content (full width, split into columns) */}
+      {(bookDescription || bookRecommendations.length > 0 || playlistData) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Book description card */}
+          <Card className="p-4">
+            <h3 className="text-lg font-semibold mb-2">Book Description</h3>
+            {isGenerating ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
               </div>
-            </>
-          ) : (
-            <>
-              <h3 className="text-lg font-semibold mb-2">Book Recommendations</h3>
-              {isGenerating ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-                </div>
-              ) : bookRecommendations.length > 0 ? (
-                <ul className="list-disc pl-5 space-y-2">
-                  {bookRecommendations.map((book, index) => (
-                    <li key={index} className="text-gray-800 dark:text-gray-200">
-                      {book}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="text-gray-500 italic">
-                  {isAuthenticated ? (
-                    "Connect with Spotify and click Generate to create a custom playlist for your book."
-                  ) : (
-                    "Click Generate to see book recommendations based on your selection."
-                  )}
-                </div>
-              )}
-            </>
-          )}
-        </Card>
-      </div>
+            ) : bookDescription ? (
+              <div className="prose max-w-none">
+                <div dangerouslySetInnerHTML={{ __html: bookDescription }} />
+              </div>
+            ) : (
+              <p className="text-gray-500 italic">
+                No description available for this book.
+              </p>
+            )}
+          </Card>
+          
+          {/* Spotify playlist or track list */}
+          <Card className="p-4">
+            {playlistData ? (
+              <>
+                <h3 className="text-lg font-semibold mb-2">
+                  {isAuthenticated ? "Book Playlist" : "Suggested Tracks"}
+                </h3>
+                
+                {isAuthenticated && playlistData.playlistId ? (
+                  // Embedded Spotify player for authenticated users
+                  <div className="aspect-video">
+                    <iframe
+                      src={`https://open.spotify.com/embed/playlist/${playlistData.playlistId}`}
+                      width="100%"
+                      height="380"
+                      frameBorder="0"
+                      allowTransparency={true}
+                      allow="encrypted-media"
+                      className="rounded-md"
+                    ></iframe>
+                  </div>
+                ) : (
+                  // Track list for non-authenticated users
+                  <div className="space-y-3 max-h-[380px] overflow-y-auto pr-2">
+                    {playlistData.tracks.map((track, index) => (
+                      <div key={index} className="flex items-center space-x-3 p-2 rounded-md bg-gray-100 dark:bg-gray-800">
+                        {track.image ? (
+                          <img 
+                            src={track.image} 
+                            alt={track.album}
+                            className="w-12 h-12 rounded-md object-cover"
+                          />
+                        ) : (
+                          <div className="w-12 h-12 rounded-md bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                            <Music className="w-6 h-6 text-gray-400" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-gray-900 dark:text-white truncate">{track.name}</p>
+                          <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{track.artist}</p>
+                          <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{track.album}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {!isAuthenticated && (
+                  <div className="mt-4 text-center">
+                    <p className="text-sm text-gray-500 mb-2">
+                      Connect with Spotify to create this playlist in your account
+                    </p>
+                  </div>
+                )}
+              </>
+            ) : bookRecommendations.length > 0 ? (
+              <>
+                <h3 className="text-lg font-semibold mb-2">Book Recommendations</h3>
+                {isGenerating ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+                  </div>
+                ) : (
+                  <ul className="list-disc pl-5 space-y-2">
+                    {bookRecommendations.map((book, index) => (
+                      <li key={index} className="text-gray-800 dark:text-gray-200">
+                        {book}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            ) : (
+              <div className="text-gray-500 italic text-center py-8">
+                Click Generate to create a playlist based on your book selection.
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
     </div>
   )
 }

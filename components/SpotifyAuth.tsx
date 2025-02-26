@@ -1,54 +1,31 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { useEffect, useState } from "react"
-import { generateCodeVerifier, generateCodeChallenge } from "@/utils/pkce"
-
-const CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID
-// Use the exact production URL for Vercel deployment
-const REDIRECT_URI = "https://bookify-v1.vercel.app/callback"
-const SCOPE = "user-read-private user-read-email playlist-modify-public playlist-modify-private user-top-read"
+import { Loader2 } from "lucide-react"
 
 export default function SpotifyAuth() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false)
-  const [isLoading, setIsLoading] = useState<boolean>(true)
-  const [authError, setAuthError] = useState<string | null>(null)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [isDisconnecting, setIsDisconnecting] = useState(false)
+
+  // Get the base URL for API calls (works in both production and development)
+  const getBaseUrl = () => {
+    if (typeof window !== 'undefined') {
+      return window.location.origin;
+    }
+    return '';
+  };
 
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const response = await fetch("/api/check-auth")
+        const response = await fetch(`${getBaseUrl()}/api/check-auth`)
         const data = await response.json()
         setIsAuthenticated(data.isAuthenticated)
-        
-        // If token needs refresh, handle it
-        if (data.needsRefresh) {
-          try {
-            // Create a form and submit it
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = '/api/refresh-token';
-            document.body.appendChild(form);
-            form.submit();
-            document.body.removeChild(form);
-            
-            // Wait a moment and then check auth again
-            setTimeout(async () => {
-              const refreshCheckResponse = await fetch("/api/check-auth");
-              const refreshData = await refreshCheckResponse.json();
-              setIsAuthenticated(refreshData.isAuthenticated);
-              setIsLoading(false);
-            }, 1000);
-            return; // Exit early to prevent setIsLoading(false)
-          } catch (refreshError) {
-            console.error("Error refreshing token:", refreshError);
-            setIsAuthenticated(false);
-          }
-        }
       } catch (error) {
         console.error("Error checking auth status:", error)
         setIsAuthenticated(false)
-        setAuthError("Failed to check authentication status")
       } finally {
         setIsLoading(false)
       }
@@ -57,78 +34,72 @@ export default function SpotifyAuth() {
     checkAuth()
   }, [])
 
-  const handleLogin = async () => {
+  const handleConnect = async () => {
     try {
-      setIsLoading(true)
-      setAuthError(null)
-
-      const codeVerifier = generateCodeVerifier(128)
-      const codeChallenge = await generateCodeChallenge(codeVerifier)
-
-      localStorage.setItem("code_verifier", codeVerifier)
-
-      const authUrl = new URL("https://accounts.spotify.com/authorize")
-      const params = {
-        response_type: "code",
-        client_id: CLIENT_ID!,
-        scope: SCOPE,
-        code_challenge_method: "S256",
-        code_challenge: codeChallenge,
-        redirect_uri: REDIRECT_URI,
-        state: crypto.randomUUID(),
+      // Get the authorization URL from the server
+      const response = await fetch(`${getBaseUrl()}/api/spotify-auth-url`)
+      const data = await response.json()
+      
+      if (data.authUrl) {
+        // Redirect to Spotify authorization page
+        window.location.href = data.authUrl
+      } else {
+        console.error("No auth URL returned")
       }
-
-      localStorage.setItem("spotify_auth_state", params.state)
-      console.log("Starting auth with redirect URI:", REDIRECT_URI)
-
-      authUrl.search = new URLSearchParams(params).toString()
-      window.location.href = authUrl.toString()
     } catch (error) {
-      console.error("Error initiating login:", error)
-      setAuthError("Failed to initiate Spotify login")
-      setIsLoading(false)
+      console.error("Error initiating Spotify auth:", error)
     }
   }
 
-  const handleLogout = async () => {
+  const handleDisconnect = async () => {
+    setIsDisconnecting(true)
     try {
-      setIsLoading(true)
-      const response = await fetch("/api/logout", { method: "POST" })
-      if (response.ok) {
-        setIsAuthenticated(false)
-      } else {
-        throw new Error("Logout failed")
-      }
+      await fetch(`${getBaseUrl()}/api/logout`, { method: "POST" })
+      setIsAuthenticated(false)
     } catch (error) {
       console.error("Error logging out:", error)
-      setAuthError("Failed to log out")
     } finally {
-      setIsLoading(false)
+      setIsDisconnecting(false)
     }
+  }
+
+  if (isLoading) {
+    return (
+      <Button variant="outline" disabled className="bg-gray-700 text-gray-300">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        Checking...
+      </Button>
+    )
+  }
+
+  if (isAuthenticated) {
+    return (
+      <Button 
+        variant="outline" 
+        onClick={handleDisconnect}
+        disabled={isDisconnecting}
+        className="bg-red-600 hover:bg-red-700 text-white border-none"
+      >
+        {isDisconnecting ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Disconnecting...
+          </>
+        ) : (
+          "Disconnect from Spotify"
+        )}
+      </Button>
+    )
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      {authError && <p className="text-red-500 text-sm">{authError}</p>}
-      
-      {isAuthenticated ? (
-        <Button
-          onClick={handleLogout}
-          className="bg-red-600 hover:bg-red-700 text-white"
-          disabled={isLoading}
-        >
-          {isLoading ? "Loading..." : "Disconnect from Spotify"}
-        </Button>
-      ) : (
-        <Button
-          onClick={handleLogin}
-          className="bg-[#1DB954] hover:bg-[#1ed760] text-white"
-          disabled={isLoading}
-        >
-          {isLoading ? "Loading..." : "Connect with Spotify"}
-        </Button>
-      )}
-    </div>
+    <Button 
+      variant="outline" 
+      onClick={handleConnect}
+      className="bg-[#1DB954] hover:bg-[#1ed760] text-white border-none"
+    >
+      Connect with Spotify
+    </Button>
   )
 }
 
