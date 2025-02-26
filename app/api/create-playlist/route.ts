@@ -29,94 +29,64 @@ export async function POST(request: Request) {
     
     const cookieStore = cookies();
     const accessToken = cookieStore.get("spotify_access_token")?.value;
+    const isAuthenticated = !!accessToken;
     
-    if (!accessToken) {
-      return NextResponse.json(
-        { error: "Not authenticated with Spotify" },
-        { status: 401 }
-      );
-    }
-    
-    console.log("Generating playlist for:", bookTitle);
-    
-    // 1. Get the user's Spotify ID
-    const userResponse = await fetch("https://api.spotify.com/v1/me", {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-    
-    if (!userResponse.ok) {
-      if (userResponse.status === 401) {
-        return NextResponse.json(
-          { error: "Spotify token expired", needsRefresh: true },
-          { status: 401 }
-        );
-      }
-      throw new Error("Failed to get user profile");
-    }
-    
-    const userData = await userResponse.json();
-    const userId = userData.id;
-    
-    // 2. Generate search queries based on book information
+    // Generate search queries based on book information
     const searchQueries = generateSearchQueries(bookTitle, bookAuthor, bookGenre, bookDescription);
     console.log("Search queries:", searchQueries);
     
-    // 3. Search for tracks
-    const trackPromises = searchQueries.map(query => 
-      searchSpotifyTracks(accessToken, query, 5)
-    );
-    const trackResults = await Promise.all(trackPromises);
-    
-    // 4. Flatten and filter the results
-    let allTracks = trackResults.flat().filter(track => track && track.type === "track");
-    console.log(`Found ${allTracks.length} initial tracks`);
-    
-    // 5. Get audio features for the tracks
-    const audioFeatures = await getAudioFeatures(accessToken, allTracks.map(track => track.id));
-    
-    // 6. Filter and rank tracks based on audio features and book genre
-    const rankedTracks = rankTracksByRelevance(allTracks, audioFeatures, bookGenre);
-    
-    // 7. Get the top 20 tracks
-    const selectedTracks = rankedTracks.slice(0, 20);
-    console.log(`Selected ${selectedTracks.length} tracks for the playlist`);
-    
-    if (selectedTracks.length === 0) {
-      throw new Error("No suitable tracks found for the given book");
-    }
-    
-    // 8. Create a playlist
-    const playlistName = `Bookify: ${bookTitle}`;
-    const playlistDescription = `A playlist inspired by "${bookTitle}"${bookAuthor ? ` by ${bookAuthor}` : ""}`;
-    
-    const createPlaylistResponse = await fetch(
-      `https://api.spotify.com/v1/users/${userId}/playlists`,
-      {
-        method: "POST",
+    if (isAuthenticated) {
+      // Authenticated user flow - create actual Spotify playlist
+      // 1. Get the user's Spotify ID
+      const userResponse = await fetch("https://api.spotify.com/v1/me", {
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          name: playlistName,
-          description: playlistDescription,
-          public: true,
-        }),
+      });
+      
+      if (!userResponse.ok) {
+        if (userResponse.status === 401) {
+          return NextResponse.json(
+            { error: "Spotify token expired", needsRefresh: true },
+            { status: 401 }
+          );
+        }
+        throw new Error("Failed to get user profile");
       }
-    );
-    
-    if (!createPlaylistResponse.ok) {
-      throw new Error("Failed to create playlist");
-    }
-    
-    const playlist = await createPlaylistResponse.json();
-    
-    // 9. Add tracks to the playlist
-    if (selectedTracks.length > 0) {
-      const addTracksResponse = await fetch(
-        `https://api.spotify.com/v1/playlists/${playlist.id}/tracks`,
+      
+      const userData = await userResponse.json();
+      const userId = userData.id;
+      
+      // 2. Search for tracks
+      const trackPromises = searchQueries.map(query => 
+        searchSpotifyTracks(accessToken, query, 5)
+      );
+      const trackResults = await Promise.all(trackPromises);
+      
+      // 3. Flatten and filter the results
+      let allTracks = trackResults.flat().filter(track => track && track.type === "track");
+      console.log(`Found ${allTracks.length} initial tracks`);
+      
+      // 4. Get audio features for the tracks
+      const audioFeatures = await getAudioFeatures(accessToken, allTracks.map(track => track.id));
+      
+      // 5. Filter and rank tracks based on audio features and book genre
+      const rankedTracks = rankTracksByRelevance(allTracks, audioFeatures, bookGenre);
+      
+      // 6. Get the top 20 tracks
+      const selectedTracks = rankedTracks.slice(0, 20);
+      console.log(`Selected ${selectedTracks.length} tracks for the playlist`);
+      
+      if (selectedTracks.length === 0) {
+        throw new Error("No suitable tracks found for the given book");
+      }
+      
+      // 7. Create a playlist
+      const playlistName = `Bookify: ${bookTitle}`;
+      const playlistDescription = `A playlist inspired by "${bookTitle}"${bookAuthor ? ` by ${bookAuthor}` : ""}`;
+      
+      const createPlaylistResponse = await fetch(
+        `https://api.spotify.com/v1/users/${userId}/playlists`,
         {
           method: "POST",
           headers: {
@@ -124,32 +94,74 @@ export async function POST(request: Request) {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            uris: selectedTracks.map(track => track.uri),
+            name: playlistName,
+            description: playlistDescription,
+            public: true,
           }),
         }
       );
       
-      if (!addTracksResponse.ok) {
-        throw new Error("Failed to add tracks to playlist");
+      if (!createPlaylistResponse.ok) {
+        throw new Error("Failed to create playlist");
       }
+      
+      const playlist = await createPlaylistResponse.json();
+      
+      // 8. Add tracks to the playlist
+      if (selectedTracks.length > 0) {
+        const addTracksResponse = await fetch(
+          `https://api.spotify.com/v1/playlists/${playlist.id}/tracks`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              uris: selectedTracks.map(track => track.uri),
+            }),
+          }
+        );
+        
+        if (!addTracksResponse.ok) {
+          throw new Error("Failed to add tracks to playlist");
+        }
+      }
+      
+      // 9. Format the response
+      const formattedPlaylist = {
+        playlistId: playlist.id,
+        name: playlistName,
+        external_url: playlist.external_urls.spotify,
+        uri: playlist.uri,
+        tracks: selectedTracks.map(track => ({
+          name: track.name,
+          artist: track.artists[0].name,
+          album: track.album.name,
+          image: track.album.images[0]?.url,
+          uri: track.uri,
+        })),
+      };
+      
+      return NextResponse.json(formattedPlaylist);
+    } else {
+      // Non-authenticated user flow - generate mock tracks
+      console.log("User not authenticated with Spotify, generating mock tracks");
+      
+      // Generate mock tracks based on the book information
+      const tracks = generateMockTracks(searchQueries, bookGenre);
+      
+      // Format the response to match the playlist data structure
+      const playlistData = {
+        playlistId: null, // No actual playlist ID since we're not creating one
+        name: `Bookify: ${bookTitle}`,
+        external_url: null,
+        uri: null,
+        tracks: tracks,
+      };
+      
+      return NextResponse.json(playlistData);
     }
-    
-    // 10. Format the response
-    const formattedPlaylist = {
-      playlistId: playlist.id,
-      name: playlistName,
-      external_url: playlist.external_urls.spotify,
-      uri: playlist.uri,
-      tracks: selectedTracks.map(track => ({
-        name: track.name,
-        artist: track.artists[0].name,
-        album: track.album.name,
-        image: track.album.images[0]?.url,
-        uri: track.uri,
-      })),
-    };
-    
-    return NextResponse.json(formattedPlaylist);
   } catch (error) {
     console.error("Error generating playlist:", error);
     return NextResponse.json(
@@ -349,4 +361,10 @@ function generateSearchQueries(
   
   // Remove duplicates and return
   return [...new Set(queries)];
+}
+
+// Generate mock tracks based on search queries and genre
+function generateMockTracks(searchQueries: string[], genre: string) {
+  // [Code from suggest-tracks endpoint that generates mock tracks]
+  // ...
 } 

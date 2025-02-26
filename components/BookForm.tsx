@@ -168,52 +168,49 @@ export default function BookForm() {
   }
 
   const handleGenerate = async () => {
+    setError("");
+    setIsGenerating(true);
+    setBookDescription("");
+    setPlaylistData(null);
+    setBookRecommendations([]);
+    
     if (!selectedBook) {
-      setError("Please select a book first")
-      return
+      setError("Please select a book first");
+      setIsGenerating(false);
+      return;
     }
-
-    setIsGenerating(true)
-    setError("")
-    setBookDescription("")
-    setPlaylistData(null)
-    setBookRecommendations([])
 
     try {
       // Use the book description directly from the Google Books API
-      setBookDescription(selectedBook.description || "No description available for this book.")
-
-      // If authenticated with Spotify, create a playlist
-      if (isAuthenticated) {
-        try {
-          const playlistResponse = await fetch(`${getBaseUrl()}/api/create-playlist`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              bookTitle: selectedBook.title,
-              bookAuthor: selectedBook.author,
-              bookGenre: selectedBook.genre,
-              bookDescription: selectedBook.description,
-            }),
-          })
-
-          if (playlistResponse.ok) {
-            const playlistData = await playlistResponse.json()
-            setPlaylistData(playlistData)
-          } else {
-            // If playlist creation fails, fall back to book recommendations
-            await generateBookRecommendations()
-          }
-        } catch (playlistError) {
-          console.error("Playlist creation error:", playlistError)
-          // Fall back to book recommendations
-          await generateBookRecommendations()
+      setBookDescription(selectedBook.description || "No description available for this book.");
+      
+      // Call the same endpoint for all users
+      try {
+        const playlistResponse = await fetch(`${getBaseUrl()}/api/create-playlist`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            bookTitle: selectedBook.title,
+            bookAuthor: selectedBook.author,
+            bookGenre: selectedBook.genre,
+            bookDescription: selectedBook.description,
+          }),
+        });
+        
+        if (playlistResponse.ok) {
+          const playlistData = await playlistResponse.json();
+          setPlaylistData(playlistData);
+        } else {
+          const errorData = await playlistResponse.json();
+          throw new Error(errorData.error || "Failed to generate playlist");
         }
-      } else {
-        // Not authenticated, generate track suggestions
-        try {
+      } catch (error) {
+        console.error("Playlist generation error:", error);
+        
+        if (!isAuthenticated) {
+          // Fall back to suggest-tracks for non-authenticated users if create-playlist fails
           const suggestResponse = await fetch(`${getBaseUrl()}/api/suggest-tracks`, {
             method: "POST",
             headers: {
@@ -225,28 +222,29 @@ export default function BookForm() {
               bookGenre: selectedBook.genre,
               bookDescription: selectedBook.description,
             }),
-          })
-
+          });
+          
           if (suggestResponse.ok) {
-            const suggestData = await suggestResponse.json()
-            setPlaylistData(suggestData)
+            const suggestData = await suggestResponse.json();
+            setPlaylistData(suggestData);
           } else {
-            // If track suggestions fail, fall back to book recommendations
-            await generateBookRecommendations()
+            throw new Error("Failed to generate track suggestions");
           }
-        } catch (suggestError) {
-          console.error("Track suggestion error:", suggestError)
-          // Fall back to book recommendations
-          await generateBookRecommendations()
+        } else {
+          throw error; // Re-throw for authenticated users
         }
       }
-    } catch (err) {
-      console.error("Generation error:", err)
-      setError(err instanceof Error ? err.message : "An error occurred")
+      
+      // Generate book recommendations regardless of authentication status
+      await generateBookRecommendations();
+      
+    } catch (error) {
+      console.error("Generation error:", error);
+      setError("Failed to generate content. Please try again.");
     } finally {
-      setIsGenerating(false)
+      setIsGenerating(false);
     }
-  }
+  };
 
   const generateBookRecommendations = async () => {
     try {
