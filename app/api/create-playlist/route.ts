@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { searchSpotifyTracks, createSpotifyPlaylist } from "@/utils/spotify";
+import { searchSpotifyTracks, createSpotifyPlaylist, getAudioFeatures } from "@/utils/spotify";
 
 // Define types for audio features
 interface AudioFeatureTarget {
@@ -30,7 +30,42 @@ const GENRE_AUDIO_FEATURES: AudioFeaturesMap = {
   historical: { valence: { target: 0.5 }, energy: { target: 0.5 } },
   biography: { valence: { target: 0.5 }, energy: { target: 0.4 } },
   children: { valence: { min: 0.6, target: 0.8 }, energy: { min: 0.5, target: 0.7 } },
+  classic: { valence: { target: 0.5 }, energy: { max: 0.5, target: 0.4 } },
+  literary: { valence: { target: 0.5 }, energy: { target: 0.4 } },
+  contemporary: { valence: { target: 0.6 }, energy: { target: 0.6 } },
   default: { valence: { target: 0.5 }, energy: { target: 0.5 } }
+};
+
+// Genre mapping for Spotify search enhancement
+const GENRE_MUSIC_MAPPING: Record<string, string[]> = {
+  romance: ["love songs", "romantic", "ballad"],
+  thriller: ["suspense", "cinematic", "dark"],
+  horror: ["dark ambient", "suspense", "soundtrack"],
+  mystery: ["soundtrack", "instrumental", "suspense"],
+  fantasy: ["soundtrack", "celtic", "epic"],
+  "sci-fi": ["electronic", "synthwave", "ambient"],
+  adventure: ["soundtrack", "epic", "orchestral"],
+  historical: ["classical", "orchestral", "period"],
+  biography: ["reflective", "acoustic", "calm"],
+  children: ["playful", "happy", "disney"],
+  classic: ["classical", "orchestral", "chamber"],
+  literary: ["acoustic", "folk", "reflective"],
+  poetry: ["acoustic", "ambient", "minimalist"],
+  fiction: ["indie", "alternative", "contemporary"],
+  nonfiction: ["instrumental", "jazz", "classical"]
+};
+
+// Literary period mappings
+const LITERARY_PERIODS: Record<string, [number, number, string[]]> = {
+  // Period name: [start year, end year, associated music genres/terms]
+  medieval: [500, 1400, ["medieval", "chant", "ancient"]],
+  renaissance: [1400, 1660, ["renaissance", "baroque", "classical"]],
+  enlightenment: [1660, 1790, ["classical", "baroque", "chamber"]],
+  romantic: [1790, 1850, ["classical", "romantic", "orchestra"]],
+  victorian: [1830, 1900, ["classical", "romantic", "orchestral"]],
+  modernist: [1900, 1945, ["jazz", "classical", "instrumental"]],
+  postmodern: [1945, 2000, ["experimental", "contemporary", "jazz"]],
+  contemporary: [2000, 2024, ["indie", "modern", "alternative"]]
 };
 
 // Define types for Spotify objects
@@ -72,7 +107,7 @@ interface MockTrack {
 
 export async function POST(request: Request) {
   try {
-    const { bookTitle, bookAuthor, bookGenre, bookDescription } = await request.json();
+    const { bookTitle, bookAuthor, bookGenre, bookDescription, bookYear } = await request.json();
     
     if (!bookTitle || !bookAuthor) {
       return NextResponse.json(
@@ -86,45 +121,62 @@ export async function POST(request: Request) {
     const accessToken = cookieStore.get("spotify_access_token")?.value;
     const isAuthenticated = !!accessToken;
     
-    console.log("Generating playlist for:", bookTitle);
+    console.log("Generating playlist for:", bookTitle, "Genre:", bookGenre);
     
-    // Generate search queries based on book information
-    const searchQueries = [
-      `${bookTitle} ${bookAuthor}`,
-      bookGenre || "",
-      ...(bookDescription ? 
-        bookDescription.split(" ").slice(0, 5).join(" ") : 
-        []
-      )
-    ].filter(query => query.trim().length > 0);
+    // Process the genre to identify its core type
+    const normalizedGenre = normalizeGenre(bookGenre || "");
+    console.log("Normalized genre:", normalizedGenre);
     
-    console.log("Search queries:", searchQueries);
+    // Determine literary period if book year is available
+    let literaryPeriod: string | null = null;
+    if (bookYear) {
+      literaryPeriod = getLiteraryPeriod(Number(bookYear));
+      console.log("Literary period:", literaryPeriod);
+    }
     
-    // Search for tracks using the user's token or a server token
-    const trackPromises = searchQueries.map(query => 
-      searchSpotifyTracks(query, 5, accessToken)
+    // Enhanced search queries based on book information and genre
+    const searchQueries = generateSearchQueries(
+      bookTitle, 
+      bookAuthor, 
+      normalizedGenre, 
+      bookDescription || "",
+      literaryPeriod
     );
-    const trackResults = await Promise.all(trackPromises);
     
-    // Flatten and shuffle the results, ensuring we only include songs
-    const allTracks = trackResults.flat();
-    const shuffledTracks = allTracks
-      .filter(track => track && track.type === "track") // Extra safety check
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 20);
+    console.log("Enhanced search queries:", searchQueries);
     
-    console.log("Found tracks:", shuffledTracks.length);
+    // Search for tracks using the search queries
+    const trackResults = await searchTracksWithQueries(searchQueries, accessToken);
     
-    if (shuffledTracks.length === 0) {
-      // Fall back to mock tracks if no Spotify tracks are found
+    console.log("Found initial tracks:", trackResults.length);
+    
+    if (trackResults.length === 0) {
       return NextResponse.json(
         { error: "No tracks found for the given book" },
         { status: 404 }
       );
     }
     
+    // Enhance track selection with audio features if authenticated
+    let selectedTracks = trackResults;
+    if (isAuthenticated && accessToken) {
+      try {
+        selectedTracks = await enhanceTrackSelectionWithAudioFeatures(
+          trackResults, 
+          normalizedGenre, 
+          accessToken
+        );
+        console.log("Enhanced tracks with audio features");
+      } catch (error) {
+        console.error("Error enhancing tracks with audio features:", error);
+      }
+    }
+    
+    // Limit to top 20 tracks
+    selectedTracks = selectedTracks.slice(0, 20);
+    
     // Format tracks in our standard format
-    const formattedTracks: Track[] = shuffledTracks.map(track => ({
+    const formattedTracks: Track[] = selectedTracks.map(track => ({
       name: track.name,
       artist: track.artists[0].name,
       album: track.album.name,
@@ -132,14 +184,16 @@ export async function POST(request: Request) {
       uri: track.uri,
     }));
     
-    if (isAuthenticated) {
+    if (isAuthenticated && accessToken) {
       // Create a real Spotify playlist for authenticated users
       try {
         const playlistName = `Bookify: ${bookTitle}`;
+        const playlistDescription = generatePlaylistDescription(bookTitle, bookAuthor, normalizedGenre, literaryPeriod);
+        
         const playlist = await createSpotifyPlaylist(
           playlistName,
-          `A playlist inspired by "${bookTitle}" by ${bookAuthor}`,
-          shuffledTracks.map(track => track.uri),
+          playlistDescription,
+          selectedTracks.map(track => track.uri),
           accessToken
         );
         
@@ -155,7 +209,6 @@ export async function POST(request: Request) {
         });
       } catch (error) {
         console.error("Error creating Spotify playlist:", error);
-        // If playlist creation fails, fall back to non-authenticated mode
       }
     }
     
@@ -181,6 +234,199 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+}
+
+// Normalize a genre string to match our known genres
+function normalizeGenre(genre: string): string {
+  const lowerGenre = genre.toLowerCase();
+  
+  if (lowerGenre.includes("romance") || lowerGenre.includes("love")) return "romance";
+  if (lowerGenre.includes("thriller")) return "thriller";
+  if (lowerGenre.includes("horror")) return "horror";
+  if (lowerGenre.includes("mystery")) return "mystery";
+  if (lowerGenre.includes("fantasy")) return "fantasy";
+  if (lowerGenre.includes("sci-fi") || lowerGenre.includes("science fiction")) return "sci-fi";
+  if (lowerGenre.includes("adventure")) return "adventure";
+  if (lowerGenre.includes("histor")) return "historical";
+  if (lowerGenre.includes("biograph")) return "biography";
+  if (lowerGenre.includes("children") || lowerGenre.includes("kids")) return "children";
+  if (lowerGenre.includes("classic")) return "classic";
+  if (lowerGenre.includes("literary") || lowerGenre.includes("literature")) return "literary";
+  if (lowerGenre.includes("poetry")) return "poetry";
+  if (lowerGenre.includes("fiction") && !lowerGenre.includes("non")) return "fiction";
+  if (lowerGenre.includes("non-fiction") || lowerGenre.includes("nonfiction")) return "nonfiction";
+  
+  return "default";
+}
+
+// Determine literary period based on year
+function getLiteraryPeriod(year: number): string | null {
+  for (const [period, [start, end, _]] of Object.entries(LITERARY_PERIODS)) {
+    if (year >= start && year <= end) {
+      return period;
+    }
+  }
+  return null;
+}
+
+// Generate enhanced search queries
+function generateSearchQueries(
+  title: string, 
+  author: string, 
+  genre: string, 
+  description: string,
+  literaryPeriod: string | null
+): string[] {
+  const queries: string[] = [
+    `${title} ${author}`, // Basic query with title and author
+  ];
+  
+  // Add genre-based music queries
+  const genreTerms = GENRE_MUSIC_MAPPING[genre] || [];
+  if (genreTerms.length > 0) {
+    queries.push(`${title} ${genreTerms[0]}`);
+    genreTerms.forEach(term => {
+      queries.push(`${term} music`);
+    });
+  }
+  
+  // Add literary period based queries if available
+  if (literaryPeriod) {
+    const periodTerms = LITERARY_PERIODS[literaryPeriod]?.[2] || [];
+    periodTerms.forEach(term => {
+      queries.push(`${term} music`);
+    });
+  }
+  
+  // Add descriptive query based on book description
+  if (description) {
+    const words = description
+      .split(/\s+/)
+      .filter(word => word.length > 3)
+      .slice(0, 7);
+    
+    if (words.length > 0) {
+      queries.push(words.join(" "));
+    }
+  }
+  
+  // Special case for classic literature
+  if (genre === "classic" || genre === "literary") {
+    queries.push("classical music");
+    queries.push("orchestral");
+    queries.push(`${author} era music`);
+  }
+  
+  return queries.filter(q => q.trim().length > 0);
+}
+
+// Search tracks with our enhanced queries
+async function searchTracksWithQueries(queries: string[], accessToken?: string) {
+  if (!accessToken) {
+    return [];
+  }
+  
+  const trackPromises = queries.map(query => 
+    searchSpotifyTracks(query, 5, accessToken)
+  );
+  
+  const results = await Promise.all(trackPromises);
+  const allTracks = results.flat();
+  
+  // Deduplicate tracks by URI
+  const uniqueTracks = Array.from(
+    new Map(allTracks.map(track => [track.uri, track]))
+  ).map(([_, track]) => track);
+  
+  // Shuffle tracks
+  return uniqueTracks
+    .filter(track => track && track.type === "track")
+    .sort(() => Math.random() - 0.5);
+}
+
+// Enhance track selection using audio features
+async function enhanceTrackSelectionWithAudioFeatures(
+  tracks: any[], 
+  genre: string, 
+  accessToken: string
+) {
+  if (tracks.length === 0) return tracks;
+  
+  // Get audio features for all tracks
+  const trackIds = tracks.map(track => track.id);
+  const audioFeatures = await getAudioFeatures(trackIds, accessToken);
+  
+  if (!audioFeatures || audioFeatures.length === 0) {
+    return tracks;
+  }
+  
+  // Get target audio features for this genre
+  const targetFeatures = GENRE_AUDIO_FEATURES[genre] || GENRE_AUDIO_FEATURES.default;
+  
+  // Create a map of track ID to audio features
+  const featuresMap = new Map();
+  audioFeatures.forEach(feature => {
+    if (feature && feature.id) {
+      featuresMap.set(feature.id, feature);
+    }
+  });
+  
+  // Score each track based on how well it matches the target features
+  const scoredTracks = tracks.map(track => {
+    const features = featuresMap.get(track.id);
+    let score = 0;
+    
+    if (features) {
+      // Score based on valence (mood)
+      const valenceTarget = targetFeatures.valence;
+      if (
+        (valenceTarget.min === undefined || features.valence >= valenceTarget.min) &&
+        (valenceTarget.max === undefined || features.valence <= valenceTarget.max)
+      ) {
+        // Higher score for closer to target
+        score += 10 - Math.abs(features.valence - valenceTarget.target) * 10;
+      }
+      
+      // Score based on energy
+      const energyTarget = targetFeatures.energy;
+      if (
+        (energyTarget.min === undefined || features.energy >= energyTarget.min) &&
+        (energyTarget.max === undefined || features.energy <= energyTarget.max)
+      ) {
+        // Higher score for closer to target
+        score += 10 - Math.abs(features.energy - energyTarget.target) * 10;
+      }
+    }
+    
+    return { track, score };
+  });
+  
+  // Sort by score (descending) and return tracks
+  return scoredTracks
+    .sort((a, b) => b.score - a.score)
+    .map(item => item.track);
+}
+
+// Generate a descriptive playlist description
+function generatePlaylistDescription(
+  title: string,
+  author: string,
+  genre: string,
+  literaryPeriod: string | null
+): string {
+  let description = `A playlist inspired by "${title}" by ${author}`;
+  
+  if (genre !== "default") {
+    description += `, crafted to match the ${genre} genre`;
+  }
+  
+  if (literaryPeriod) {
+    description += ` from the ${literaryPeriod} literary period`;
+  }
+  
+  description += ". Created with Bookify.";
+  
+  return description;
 }
 
 // Define fallback tracks to ensure we always have something to display

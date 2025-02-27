@@ -429,8 +429,8 @@ export default function BookForm() {
                           </div>
                         ))
                       ) : (
-                        <div className="text-center py-6 text-gray-500">
-                          No tracks available for this playlist. Please try again with a different book.
+                        <div className="text-center py-2 text-gray-500">
+                          No tracks available for this playlist.
                         </div>
                       )}
                     </div>
@@ -439,10 +439,9 @@ export default function BookForm() {
                 
                 {!isAuthenticated && (
                   <div className="mt-4 text-center">
-                    <p className="text-sm text-gray-500 mb-2">
+                    <p className="text-sm text-green-600 mb-2">
                       Connect with Spotify to create this playlist in your account
                     </p>
-                    <SpotifyAuth />
                   </div>
                 )}
               </>

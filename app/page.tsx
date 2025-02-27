@@ -14,7 +14,7 @@ export default function Home({
   return (
     <main className="container mx-auto px-4 py-10">
       <h1 className="text-8xl font-bold mt-20 mb-5 text-center text-white drop-shadow-lg">Bookify</h1>
-      <h2 className="text-xl mb-8 text-center text-white drop-shadow-lg">
+      <h2 className="text-xl mb-8 text-center text-green-100 drop-shadow-lg">
         The perfect playlist for your next read.
       </h2>
       <div className="flex flex-col items-center gap-4 mb-8">

@@ -129,3 +129,36 @@ async function savePlaylistToUserAccount(accessToken: string, playlistId: string
 
 export { getSpotifyAccessToken, savePlaylistToUserAccount }
 
+export async function getAudioFeatures(trackIds: string[], accessToken: string) {
+  if (!trackIds.length) return [];
+  
+  // Spotify API limits to 100 IDs per request
+  const batchSize = 100;
+  const results = [];
+  
+  for (let i = 0; i < trackIds.length; i += batchSize) {
+    const batch = trackIds.slice(i, i + batchSize);
+    const idsString = batch.join(',');
+    
+    const response = await fetch(
+      `https://api.spotify.com/v1/audio-features?ids=${idsString}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }
+    );
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.audio_features) {
+        results.push(...data.audio_features);
+      }
+    } else {
+      console.error("Failed to fetch audio features:", await response.text());
+    }
+  }
+  
+  return results;
+}
+
