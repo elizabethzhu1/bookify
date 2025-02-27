@@ -231,11 +231,17 @@ export async function POST(request: Request) {
       tracks = generateMockTracks(searchQueries);
     }
     
+    // Make sure playlistId is actually a string value, not null or undefined
+    // This is critical for the iframe to work properly
+    if (playlistId === null || playlistId === undefined) {
+      playlistId = '';
+    }
+
     return NextResponse.json({
       playlistId,
       name: `Bookify: ${bookTitle}`,
-      external_url,
-      uri,
+      external_url: external_url || null,
+      uri: uri || null,
       tracks
     });
   } catch (error) {
