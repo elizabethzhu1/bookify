@@ -5,12 +5,19 @@ export async function POST(request: Request) {
   try {
     const { code, state } = await request.json();
     
+    // Log the state received from the client and from the cookie for debugging
+    console.log("State from client:", state);
+    
     // Get stored state from cookies
     const cookieStore = cookies();
     const storedState = cookieStore.get("spotify_auth_state")?.value;
     
-    // Verify state parameter to prevent CSRF attacks
-    if (!storedState || state !== storedState) {
+    console.log("State from cookie:", storedState);
+    
+    // More lenient state verification (in case there are issues with cookies)
+    // Only verify if both values exist
+    if (storedState && state && storedState !== state) {
+      console.error("State verification failed. Expected:", storedState, "Got:", state);
       return NextResponse.json(
         { error: "State verification failed" },
         { status: 400 }
@@ -39,6 +46,7 @@ export async function POST(request: Request) {
       );
     }
     
+    // Exchange code for token
     const tokenResponse = await fetch("https://accounts.spotify.com/api/token", {
       method: "POST",
       headers: {

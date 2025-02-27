@@ -182,10 +182,11 @@ export async function POST(request: Request) {
       return NextResponse.json(formattedPlaylist);
     } else {
       // Non-authenticated user flow - generate mock tracks
-      console.log("User not authenticated with Spotify, generating mock tracks");
-      
-      // Generate mock tracks based on the book information
+      console.log("Generating mock tracks for non-authenticated user");
       const tracks = generateMockTracks(searchQueries, bookGenre || "");
+      
+      // Ensure we have tracks
+      console.log(`Generated ${tracks.length} mock tracks`);
       
       // Make sure tracks is never undefined or null
       const safeTrackList = tracks && tracks.length > 0 ? tracks : [];
@@ -202,6 +203,7 @@ export async function POST(request: Request) {
         })),
       };
       
+      console.log(`Returning playlist with ${playlistData.tracks.length} tracks`);
       return NextResponse.json(playlistData);
     }
   } catch (error) {
@@ -439,6 +441,31 @@ interface MockTrack {
   uri: string;
 }
 
+// Define fallback tracks to ensure we always have something to display
+const FALLBACK_TRACKS: MockTrack[] = [
+  {
+    name: "Bohemian Rhapsody",
+    artist: "Queen",
+    album: "A Night at the Opera",
+    image: "https://i.scdn.co/image/ab67616d0000b273c0a3f56023c52c21b6ec4d16",
+    uri: "spotify:track:7tFiyTwD0nx5a1eklYtX2J"
+  },
+  {
+    name: "Billie Jean",
+    artist: "Michael Jackson",
+    album: "Thriller",
+    image: "https://i.scdn.co/image/ab67616d0000b2734121faee8df82c526cbab2be",
+    uri: "spotify:track:5ChkMS8OtdzJeqyybCc9R5"
+  },
+  {
+    name: "Imagine",
+    artist: "John Lennon",
+    album: "Imagine",
+    image: "https://i.scdn.co/image/ab67616d0000b273299caa997d9e9b921b9a9a59",
+    uri: "spotify:track:7pKfPomDEeI4TPT6EOYjn9"
+  }
+];
+
 // Generate mock tracks based on search queries and genre
 function generateMockTracks(searchQueries: string[], genre: string): MockTrack[] {
   // Enhanced mock track pool with more varied songs and valid image URLs
@@ -614,5 +641,5 @@ function generateMockTracks(searchQueries: string[], genre: string): MockTrack[]
     usedTrackIndices.add(randomIndex);
   }
   
-  return selectedTracks;
+  return selectedTracks.length > 0 ? selectedTracks : FALLBACK_TRACKS;
 } 

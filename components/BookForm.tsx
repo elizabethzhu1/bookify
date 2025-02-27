@@ -200,13 +200,20 @@ export default function BookForm() {
         });
         
         if (playlistResponse.ok) {
-          const data = await playlistResponse.json();
-          // Ensure tracks is always an array even if it's missing from the API response
-          const playlistData = {
-            ...data,
-            tracks: data.tracks || []
+          const responseData = await playlistResponse.json();
+          console.log("Playlist API response:", responseData);
+          
+          // Ensure tracks is always an array with proper data
+          const tracks = Array.isArray(responseData.tracks) ? responseData.tracks : [];
+          
+          // Create a cleaned playlist data object
+          const cleanedPlaylistData = {
+            ...responseData,
+            tracks: tracks.length > 0 ? tracks : [], // Ensure tracks is valid array
           };
-          setPlaylistData(playlistData);
+          
+          console.log("Setting playlist data with tracks:", cleanedPlaylistData.tracks.length);
+          setPlaylistData(cleanedPlaylistData);
         } else {
           const errorData = await playlistResponse.json();
           throw new Error(errorData.error || "Failed to generate playlist");
@@ -214,13 +221,13 @@ export default function BookForm() {
       } catch (error) {
         console.error("Playlist generation error:", error);
         
-        // Fallback if authentication or API has issues
+        // Fallback with default empty tracks
         setPlaylistData({
           playlistId: null,
           name: `Bookify: ${selectedBook.title}`,
           external_url: null,
           uri: null,
-          tracks: [] // Always provide at least an empty array
+          tracks: []
         });
       }
       
@@ -469,16 +476,16 @@ export default function BookForm() {
                     </div>
                     
                     <div className="space-y-3 max-h-[380px] overflow-y-auto pr-2">
-                      {playlistData && playlistData.tracks && playlistData.tracks.length > 0 ? (
+                      {playlistData && Array.isArray(playlistData.tracks) && playlistData.tracks.length > 0 ? (
                         playlistData.tracks.map((track, index) => (
                           <div 
                             key={index} 
                             className="flex items-center space-x-3 p-2 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
                           >
-                            {track.image ? (
+                            {track && track.image ? (
                               <img 
                                 src={track.image} 
-                                alt={`${track.album} cover`}
+                                alt={`${track.album || 'Album'} cover`}
                                 className="w-12 h-12 rounded-md object-cover"
                                 onError={(e) => {
                                   e.currentTarget.src = "https://i.scdn.co/image/ab67616d0000b2731e173bb4e0f8ef205d51a987";
@@ -490,15 +497,15 @@ export default function BookForm() {
                               </div>
                             )}
                             <div className="flex-1 min-w-0">
-                              <p className="font-medium text-gray-900 dark:text-white truncate">{track.name}</p>
-                              <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{track.artist}</p>
-                              <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{track.album}</p>
+                              <p className="font-medium text-gray-900 dark:text-white truncate">{track?.name || 'Unknown Track'}</p>
+                              <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{track?.artist || 'Unknown Artist'}</p>
+                              <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{track?.album || 'Unknown Album'}</p>
                             </div>
                           </div>
                         ))
                       ) : (
                         <div className="text-center py-6 text-gray-500">
-                          No tracks available for this playlist.
+                          No tracks available for this playlist. Please try again with a different book.
                         </div>
                       )}
                     </div>

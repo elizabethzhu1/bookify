@@ -15,8 +15,8 @@ export async function GET() {
       ? "https://bookify-v1.vercel.app/callback"
       : "http://localhost:3000/callback";
     
-    // Generate a random state value for security
-    const state = generateRandomString(16);
+    // Generate a random state value for security (make it longer)
+    const state = generateRandomString(32);
     
     // Define the scopes we need
     const scope = "user-read-private user-read-email playlist-modify-public playlist-modify-private user-top-read";
@@ -33,14 +33,14 @@ export async function GET() {
     
     const authUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
     
-    // Set state cookie for verification
+    // Set state cookie for verification with improved settings
     const response = NextResponse.json({ authUrl });
     response.cookies.set("spotify_auth_state", state, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
-      maxAge: 60 * 10, // 10 minutes
+      maxAge: 60 * 15, // 15 minutes (increased from 10)
     });
     
     return response;
