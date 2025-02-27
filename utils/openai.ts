@@ -49,40 +49,19 @@ export async function generateBookPlaylistRecommendations(
   
   Please format your response as a JSON object with:
   1. A "songRecommendations" array containing objects with "title", "artist", and "reason" fields
-  2. An "audioFeatureTargets" object with "valence", "energy", "danceability", "acousticness", "instrumentalness", and "tempo" values
+  2. An "audioFeatureTargets" object with "valence", "energy", "danceability" values between 0.0 and 1.0
   3. A "themes" array with key themes from the book that informed your song selections
   4. A "moodDescription" string that captures the overall mood you're aiming for
-  
-  For example:
-  {
-    "songRecommendations": [
-      {
-        "title": "Song Title",
-        "artist": "Artist Name",
-        "reason": "Brief explanation of why this song fits"
-      }
-    ],
-    "audioFeatureTargets": {
-      "valence": 0.7,
-      "energy": 0.6,
-      "danceability": 0.5,
-      "acousticness": 0.4,
-      "instrumentalness": 0.2,
-      "tempo": 120
-    },
-    "themes": ["love", "war", "redemption"],
-    "moodDescription": "Uplifting yet reflective"
-  }
   `;
 
   try {
-    // Send request to OpenAI
+    // Send request to OpenAI with explicit response format
     const response = await openai.chat.completions.create({
-      model: "gpt-4-turbo", // or gpt-3.5-turbo if preferred
+      model: "gpt-3.5-turbo", // Using 3.5-turbo which may be more reliable for JSON formatting
       messages: [
         {
           role: "system",
-          content: "You are a music curator who provides song recommendations and audio feature targets in JSON format.",
+          content: "You are a music curator who provides song recommendations and audio feature targets in valid JSON format. Always use double quotes for all keys and string values. Use numbers without quotes for numeric values."
         },
         {
           role: "user",
@@ -90,12 +69,31 @@ export async function generateBookPlaylistRecommendations(
         },
       ],
       response_format: { type: "json_object" },
-      temperature: 0.7,
+      temperature: 0.5, // Lower temperature for more consistent formatting
     });
 
-    // Parse the JSON response
+    // Get the content from the response
     const content = response.choices[0]?.message?.content || "";
-    return JSON.parse(content) as BookPlaylistRecommendation;
+    
+    // Handle potential formatting issues
+    try {
+      return JSON.parse(content) as BookPlaylistRecommendation;
+    } catch (parseError) {
+      console.error("Error parsing OpenAI response as JSON:", parseError);
+      console.log("Raw response:", content);
+      
+      // Return fallback values if parsing fails
+      return {
+        songRecommendations: [],
+        audioFeatureTargets: {
+          valence: 0.5,
+          energy: 0.5,
+          danceability: 0.5,
+        },
+        themes: [],
+        moodDescription: "Balanced and neutral"
+      };
+    }
   } catch (error) {
     console.error("Error generating playlist recommendations with OpenAI:", error);
     
@@ -108,7 +106,7 @@ export async function generateBookPlaylistRecommendations(
         danceability: 0.5,
       },
       themes: [],
-      moodDescription: ""
+      moodDescription: "Balanced and neutral"
     };
   }
 } 

@@ -130,19 +130,35 @@ export async function POST(request: Request) {
     
     console.log("Generating playlist for:", bookTitle, "Genre:", bookGenre);
     
-    // Get OpenAI recommendations for this book
+    // Get OpenAI recommendations for this book (with error handling)
     console.log("Requesting AI recommendations...");
-    const aiRecommendations = await generateBookPlaylistRecommendations(
-      bookTitle,
-      bookAuthor,
-      bookGenre || "",
-      bookDescription || "",
-      bookYear || ""
-    );
-    
-    console.log("AI themes:", aiRecommendations.themes);
-    console.log("AI mood:", aiRecommendations.moodDescription);
-    console.log("AI recommended songs:", aiRecommendations.songRecommendations.length);
+    let aiRecommendations;
+    try {
+      aiRecommendations = await generateBookPlaylistRecommendations(
+        bookTitle,
+        bookAuthor,
+        bookGenre || "",
+        bookDescription || "",
+        bookYear || ""
+      );
+      
+      console.log("AI themes:", aiRecommendations.themes);
+      console.log("AI mood:", aiRecommendations.moodDescription);
+      console.log("AI recommended songs:", aiRecommendations.songRecommendations.length);
+    } catch (error) {
+      console.error("Error getting AI recommendations:", error);
+      // Provide fallback recommendations
+      aiRecommendations = {
+        songRecommendations: [],
+        audioFeatureTargets: {
+          valence: 0.5,
+          energy: 0.5,
+          danceability: 0.5,
+        },
+        themes: [],
+        moodDescription: "Default mood"
+      };
+    }
     
     // Create specialized search queries from the AI recommendations
     const bookQueries = generateSearchQueries(
@@ -465,10 +481,11 @@ async function enhanceTrackSelectionWithAIFeatures(
           const trackNameArtist = `${track.name} ${track.artists[0].name}`.toLowerCase();
           
           // Check if this is one of the AI-recommended songs
-          const isRecommended = aiRecommendations.songRecommendations.some(rec => {
+          const isRecommended = aiRecommendations?.songRecommendations?.some(rec => {
+            if (!rec || !rec.title || !rec.artist) return false;
             const recString = `${rec.title} ${rec.artist}`.toLowerCase();
             return trackNameArtist.includes(recString) || recString.includes(trackNameArtist);
-          });
+          }) || false;
           
           if (isRecommended) {
             score += 20; // Big bonus for AI-recommended songs
