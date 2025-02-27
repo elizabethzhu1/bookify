@@ -33,6 +33,7 @@ interface PlaylistData {
   external_url: string
   uri: string
   tracks: Track[]
+  verified: boolean
 }
 
 export default function BookForm() {
@@ -176,23 +177,27 @@ export default function BookForm() {
   }
 
   const handleGenerate = async () => {
-    // Reset states
     setError("");
     setBookRecommendations([]);
     setPlaylistData(null);
+    
+    if (!selectedBook) {
+      setError("Please select a book first");
+      return;
+    }
+
+    // Immediately set the book description - no waiting
+    setBookDescription(selectedBook.description || "No description available for this book.");
+
+    // Start playlist generation
     setIsPlaylistLoading(true);
     
     try {
-      // Immediately display the book description
-      setBookDescription(selectedBook.description || "No description available for this book.");
-      
       // Create the playlist
       console.log("Creating playlist for:", selectedBook.title);
       const playlistResponse = await fetch(`${getBaseUrl()}/api/create-playlist`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           bookTitle: selectedBook.title,
           bookAuthor: selectedBook.author,
@@ -207,28 +212,59 @@ export default function BookForm() {
         throw new Error(`Failed to create playlist: ${playlistResponse.status}`);
       }
       
-      const playlistData = await playlistResponse.json();
-      console.log("Playlist created:", playlistData);
+      const responseData = await playlistResponse.json();
+      console.log("Playlist API response:", responseData);
       
-      // Verify we have a valid playlist ID for authenticated users
-      if (isAuthenticated && (!playlistData.playlistId || playlistData.playlistId === "null")) {
-        throw new Error("No valid playlist ID returned");
+      // If authenticated and we have a playlist ID, verify the playlist with a delay
+      if (isAuthenticated && responseData.playlistId) {
+        // Add a short delay to allow Spotify to process the playlist
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Now verify the playlist exists by trying to fetch it
+        console.log("Verifying playlist with ID:", responseData.playlistId);
+        try {
+          const verifyResponse = await fetch(`${getBaseUrl()}/api/verify-playlist?id=${responseData.playlistId}`);
+          const verifyData = await verifyResponse.json();
+          
+          if (!verifyResponse.ok || !verifyData.exists) {
+            console.warn("Playlist verification failed, using fallback display");
+            // Still set the playlist data but we'll handle display differently
+            setPlaylistData({
+              ...responseData,
+              verified: false
+            });
+          } else {
+            // Playlist verified successfully
+            setPlaylistData({
+              ...responseData,
+              verified: true
+            });
+          }
+        } catch (verifyError) {
+          console.error("Error verifying playlist:", verifyError);
+          // Still set the data, but mark as unverified
+          setPlaylistData({
+            ...responseData,
+            verified: false
+          });
+        }
+      } else {
+        // No playlist ID or not authenticated, just use the data directly
+        setPlaylistData(responseData);
       }
-      
-      // Set the playlist data
-      setPlaylistData(playlistData);
     } catch (error) {
       console.error("Playlist generation error:", error);
       setError("Failed to create playlist. Please try again.");
       
-      // Provide fallback non-embedded playlist
+      // Provide fallback playlist data
       if (selectedBook) {
         setPlaylistData({
           playlistId: null,
           name: `Bookify: ${selectedBook.title}`,
           external_url: null,
           uri: null,
-          tracks: []
+          tracks: [],
+          verified: false
         });
       }
     } finally {
@@ -373,74 +409,79 @@ export default function BookForm() {
                 </h3>
                 
                 {isAuthenticated && playlistData.playlistId ? (
-                  // Authenticated user - show embedded playlist
-                  <div className="w-full h-[380px]">
-                    {/* Log the playlist ID for debugging */}
-                    {console.log("Embedding playlist:", playlistData.playlistId)}
-                    <iframe
-                      src={`https://open.spotify.com/embed/playlist/${playlistData.playlistId}`}
-                      width="100%" 
-                      height="380"
-                      frameBorder="0"
-                      allowFullScreen={false}
-                      allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                      loading="lazy"
-                      className="rounded-md"
-                      style={{ border: 'none' }}
-                    ></iframe>
+                  <div className="w-full">
+                    {playlistData.verified !== false ? (
+                      <div className="w-full h-[380px]">
+                        <iframe
+                          src={`https://open.spotify.com/embed/playlist/${playlistData.playlistId}`}
+                          width="100%" 
+                          height="380"
+                          frameBorder="0"
+                          allowFullScreen={false}
+                          allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                          loading="lazy"
+                          className="rounded-md"
+                          style={{ border: 'none' }}
+                          onError={(e) => {
+                            console.error("Iframe loading error", e);
+                          }}
+                        ></iframe>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-amber-600 mb-3">Your playlist has been created! Open it in Spotify:</p>
+                        <a 
+                          href={playlistData.external_url || `https://open.spotify.com/playlist/${playlistData.playlistId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block mb-4 py-2 px-4 bg-[#1DB954] text-white rounded-md hover:bg-[#1ed760] text-center"
+                        >
+                          Open in Spotify
+                        </a>
+                        
+                        <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
+                          {playlistData && Array.isArray(playlistData.tracks) && playlistData.tracks.length > 0 ? (
+                            playlistData.tracks.map((track, index) => (
+                              <div 
+                                key={index} 
+                                className="flex items-center space-x-3 p-2 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                              >
+                                {track && track.image ? (
+                                  <img 
+                                    src={track.image} 
+                                    alt={`${track.album || 'Album'} cover`}
+                                    className="w-12 h-12 rounded-md object-cover"
+                                    onError={(e) => {
+                                      e.currentTarget.src = "https://i.scdn.co/image/ab67616d0000b2731e173bb4e0f8ef205d51a987";
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="w-12 h-12 rounded-md bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                                    <Music className="w-6 h-6 text-gray-400" />
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-medium text-gray-900 dark:text-white truncate">{track?.name || 'Unknown Track'}</p>
+                                  <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{track?.artist || 'Unknown Artist'}</p>
+                                  <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{track?.album || 'Unknown Album'}</p>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-center py-2 text-gray-500">
+                              Connect with Spotify to generate a playlist.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
-                  // Non-authenticated user - show track list
-                  <div>
-                    <div className="space-y-3 max-h-[380px] overflow-y-auto pr-2">
-                      {playlistData && Array.isArray(playlistData.tracks) && playlistData.tracks.length > 0 ? (
-                        playlistData.tracks.map((track, index) => (
-                          <div 
-                            key={index} 
-                            className="flex items-center space-x-3 p-2 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                          >
-                            {track && track.image ? (
-                              <img 
-                                src={track.image} 
-                                alt={`${track.album || 'Album'} cover`}
-                                className="w-12 h-12 rounded-md object-cover"
-                                onError={(e) => {
-                                  e.currentTarget.src = "https://i.scdn.co/image/ab67616d0000b2731e173bb4e0f8ef205d51a987";
-                                }}
-                              />
-                            ) : (
-                              <div className="w-12 h-12 rounded-md bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-                                <Music className="w-6 h-6 text-gray-400" />
-                              </div>
-                            )}
-                            <div className="flex-1 min-w-0">
-                              <p className="font-medium text-gray-900 dark:text-white truncate">{track?.name || 'Unknown Track'}</p>
-                              <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{track?.artist || 'Unknown Artist'}</p>
-                              <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{track?.album || 'Unknown Album'}</p>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="text-center py-2 text-gray-500">
-                          Connect with Spotify to generate a playlist.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-                
-                {!isAuthenticated && (
-                  <div className="mt-4 text-center">
-                    <p className="text-sm text-green-600 mb-2">
-                      Connect with Spotify to hear this playlist
-                    </p>
+                  <div className="text-gray-500 italic text-center py-8">
+                    Click Generate to create a playlist based on your book selection.
                   </div>
                 )}
               </>
-            ) : (
-              <div className="text-gray-500 italic text-center py-8">
-                Click Generate to create a playlist based on your book selection.
-              </div>
             )}
           </Card>
         </div>
