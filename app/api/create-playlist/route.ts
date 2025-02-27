@@ -456,7 +456,7 @@ function generateMockTracks(searchQueries: string[], genre: string): MockTrack[]
       artist: "Etta James",
       album: "At Last!",
       image: "https://i.scdn.co/image/ab67616d0000b273053c9b7e40c66d2505b8e398",
-      uri: "spotify:track:romance2"
+      uri: "spotify:track:5PeMCRKI0wGPCsrcDZLof1"
     },
     
     // Mystery/Thriller tracks
@@ -465,14 +465,14 @@ function generateMockTracks(searchQueries: string[], genre: string): MockTrack[]
       artist: "Michael Jackson",
       album: "Thriller",
       image: "https://i.scdn.co/image/ab67616d0000b2734121faee8df82c526cbab2be",
-      uri: "spotify:track:thriller1"
+      uri: "spotify:track:7azo4rpSUh8nXgtonC6Pkq"
     },
     {
       name: "Bad Guy",
       artist: "Billie Eilish",
       album: "WHEN WE ALL FALL ASLEEP, WHERE DO WE GO?",
       image: "https://i.scdn.co/image/ab67616d0000b273d55326e912165c6f4e42aa8e",
-      uri: "spotify:track:thriller2"
+      uri: "spotify:track:2Fxmhks0bxGSBdJ92vM42m"
     },
     
     // Fantasy/Adventure tracks
@@ -481,14 +481,14 @@ function generateMockTracks(searchQueries: string[], genre: string): MockTrack[]
       artist: "Led Zeppelin",
       album: "Led Zeppelin III",
       image: "https://i.scdn.co/image/ab67616d0000b273a1995d8c79c87d6e889ef2a3",
-      uri: "spotify:track:fantasy1"
+      uri: "spotify:track:78lgmZwycJ3nzsdgmPPGNx"
     },
     {
       name: "The Dragonborn Comes",
       artist: "Malukah",
       album: "Skyrim",
       image: "https://i.scdn.co/image/ab67616d0000b27336c5417732e53e23cb219246",
-      uri: "spotify:track:fantasy2"
+      uri: "spotify:track:6uUg2PAAcJBlKhZxC5NeKn"
     },
     
     // Sci-Fi tracks
@@ -497,14 +497,14 @@ function generateMockTracks(searchQueries: string[], genre: string): MockTrack[]
       artist: "David Bowie",
       album: "The Rise and Fall of Ziggy Stardust",
       image: "https://i.scdn.co/image/ab67616d0000b2730ca902776ffe78a3f92adc61",
-      uri: "spotify:track:scifi1"
+      uri: "spotify:track:0pQskrTITgmCMyr85tb9qq"
     },
     {
       name: "Space Oddity",
       artist: "David Bowie",
       album: "Space Oddity",
       image: "https://i.scdn.co/image/ab67616d0000b2731e173bb4e0f8ef205d51a987",
-      uri: "spotify:track:scifi2"
+      uri: "spotify:track:72Z17vmmeQKAg8bptWvpVG"
     },
     
     // Historical tracks
@@ -513,14 +513,14 @@ function generateMockTracks(searchQueries: string[], genre: string): MockTrack[]
       artist: "Bob Dylan",
       album: "The Times They Are A-Changin'",
       image: "https://i.scdn.co/image/ab67616d0000b273e8dd3c6b63d23c905e71d196",
-      uri: "spotify:track:historical1"
+      uri: "spotify:track:52vA3CYKZqZVdQnzRrdZt6"
     },
     {
       name: "Ohio",
       artist: "Crosby, Stills, Nash & Young",
       album: "4 Way Street",
-      image: "https://i.scdn.co/image/ab67616d0000b273e40f9b671dda4f6ef8f83d80",
-      uri: "spotify:track:historical2"
+      image: "https://i.scdn.co/image/ab67616d0000b273e40f9b671dda4f6ef8f83d80", 
+      uri: "spotify:track:2sSGN41nD0wHF9PmYhes7z"
     },
     
     // Children's tracks
@@ -529,14 +529,14 @@ function generateMockTracks(searchQueries: string[], genre: string): MockTrack[]
       artist: "Auli'i Cravalho",
       album: "Moana",
       image: "https://i.scdn.co/image/ab67616d0000b2738ead30d906aca7bd5447ca2c",
-      uri: "spotify:track:children1"
+      uri: "spotify:track:5hYTyyh2odQKphUbMqc5gN"
     },
     {
       name: "Let It Go",
       artist: "Idina Menzel",
       album: "Frozen",
       image: "https://i.scdn.co/image/ab67616d0000b2735b8397363f8f0f4041ae1ea0",
-      uri: "spotify:track:children2"
+      uri: "spotify:track:0qcr5FMsEO85NAQjrlDRKo"
     },
     
     // General/Classic tracks
@@ -545,14 +545,14 @@ function generateMockTracks(searchQueries: string[], genre: string): MockTrack[]
       artist: "Queen",
       album: "A Night at the Opera",
       image: "https://i.scdn.co/image/ab67616d0000b273c0a3f56023c52c21b6ec4d16", 
-      uri: "spotify:track:classic1"
+      uri: "spotify:track:7tFiyTwD0nx5a1eklYtX2J"
     },
     {
       name: "Smells Like Teen Spirit",
       artist: "Nirvana",
       album: "Nevermind",
       image: "https://i.scdn.co/image/ab67616d0000b27336adad5054e9302b364a05b4",
-      uri: "spotify:track:classic2"
+      uri: "spotify:track:5ghIJDpPoe3CfHMGu71E6T"
     }
   ];
 

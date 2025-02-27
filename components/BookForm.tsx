@@ -437,7 +437,7 @@ export default function BookForm() {
                 </h3>
                 
                 {isAuthenticated && playlistData.playlistId ? (
-                  // Embedded Spotify player for authenticated users
+                  // Authenticated user - show embedded playlist
                   <div className="aspect-video">
                     <iframe
                       src={`https://open.spotify.com/embed/playlist/${playlistData.playlistId}`}
@@ -450,48 +450,50 @@ export default function BookForm() {
                     ></iframe>
                   </div>
                 ) : (
-                  // Track list with Spotify links for non-authenticated users
+                  // Non-authenticated user - show simple track list without embedding
                   <div>
                     <div className="mb-4 flex justify-center">
                       <Button 
                         className="bg-[#1DB954] hover:bg-[#1ed760] text-white"
-                        onClick={() => window.open("https://open.spotify.com/", "_blank")}
+                        onClick={() => {
+                          // Open the first track in Spotify
+                          const trackId = playlistData.tracks[0]?.uri.split(':')[2];
+                          if (trackId) {
+                            window.open(`https://open.spotify.com/track/${trackId}`, "_blank");
+                          }
+                        }}
                       >
                         <Music className="w-4 h-4 mr-2" />
                         Open in Spotify
                       </Button>
                     </div>
                     
-                    <div className="space-y-3 max-h-[320px] overflow-y-auto pr-2">
+                    <div className="space-y-3 max-h-[380px] overflow-y-auto pr-2">
                       {playlistData && playlistData.tracks && playlistData.tracks.length > 0 ? (
                         playlistData.tracks.map((track, index) => (
-                          <div key={index} className="flex items-center space-x-3 p-2 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-                            <a 
-                              href={`https://open.spotify.com/track/${track.uri.split(':')[2]}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center space-x-3 w-full"
-                            >
-                              {track.image ? (
-                                <img 
-                                  src={track.image} 
-                                  alt={`${track.album} cover`}
-                                  className="w-12 h-12 rounded-md object-cover"
-                                  onError={(e) => {
-                                    e.currentTarget.src = "https://i.scdn.co/image/ab67616d0000b2731e173bb4e0f8ef205d51a987";
-                                  }}
-                                />
-                              ) : (
-                                <div className="w-12 h-12 rounded-md bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-                                  <Music className="w-6 h-6 text-gray-400" />
-                                </div>
-                              )}
-                              <div className="flex-1 min-w-0">
-                                <p className="font-medium text-gray-900 dark:text-white truncate">{track.name}</p>
-                                <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{track.artist}</p>
-                                <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{track.album}</p>
+                          <div 
+                            key={index} 
+                            className="flex items-center space-x-3 p-2 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                          >
+                            {track.image ? (
+                              <img 
+                                src={track.image} 
+                                alt={`${track.album} cover`}
+                                className="w-12 h-12 rounded-md object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.src = "https://i.scdn.co/image/ab67616d0000b2731e173bb4e0f8ef205d51a987";
+                                }}
+                              />
+                            ) : (
+                              <div className="w-12 h-12 rounded-md bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                                <Music className="w-6 h-6 text-gray-400" />
                               </div>
-                            </a>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-gray-900 dark:text-white truncate">{track.name}</p>
+                              <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{track.artist}</p>
+                              <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{track.album}</p>
+                            </div>
                           </div>
                         ))
                       ) : (
