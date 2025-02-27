@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { searchSpotifyTracks, createSpotifyPlaylist } from "@/utils/spotify";
 
 // Define types for audio features
 interface AudioFeatureTarget {
@@ -52,6 +53,23 @@ interface SpotifyAudioFeatures {
   danceability: number;
 }
 
+// Define the Track interface
+interface Track {
+  name: string;
+  artist: string;
+  album: string;
+  image?: string;
+  uri: string;
+}
+
+interface MockTrack {
+  name: string;
+  artist: string;
+  album: string;
+  image?: string;
+  uri: string;
+}
+
 export async function POST(request: Request) {
   try {
     const { bookTitle, bookAuthor, bookGenre, bookDescription } = await request.json();
@@ -68,381 +86,77 @@ export async function POST(request: Request) {
     const isAuthenticated = !!accessToken;
     
     // Generate search queries based on book information
-    const searchQueries = generateSearchQueries(bookTitle, bookAuthor, bookGenre, bookDescription);
+    const searchQueries = [
+      `${bookTitle} ${bookAuthor || ""}`,
+      bookGenre || "",
+      ...bookDescription?.split(/\s+/).slice(0, 10) || []
+    ].filter(query => query.trim().length > 0);
+    
     console.log("Search queries:", searchQueries);
     
+    // Generate tracks using mock data (for all users)
+    const mockTracks = generateMockTracks(searchQueries, bookGenre || "");
+    console.log(`Generated ${mockTracks.length} tracks`);
+    
     if (isAuthenticated) {
-      // Authenticated user flow - create actual Spotify playlist
-      // 1. Get the user's Spotify ID
-      const userResponse = await fetch("https://api.spotify.com/v1/me", {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
+      // Authenticated user flow - create actual Spotify playlist from the same tracks
+      console.log("Creating Spotify playlist for authenticated user");
       
-      if (!userResponse.ok) {
-        if (userResponse.status === 401) {
-          return NextResponse.json(
-            { error: "Spotify token expired", needsRefresh: true },
-            { status: 401 }
-          );
-        }
-        throw new Error("Failed to get user profile");
-      }
-      
-      const userData = await userResponse.json();
-      const userId = userData.id;
-      
-      // 2. Search for tracks
-      const trackPromises = searchQueries.map(query => 
-        searchSpotifyTracks(accessToken, query, 5)
-      );
-      const trackResults = await Promise.all(trackPromises);
-      
-      // 3. Flatten and filter the results
-      let allTracks = trackResults.flat().filter((track): track is SpotifyTrack => track && track.type === "track");
-      console.log(`Found ${allTracks.length} initial tracks`);
-      
-      // 4. Get audio features for the tracks
-      const audioFeatures = await getAudioFeatures(accessToken, allTracks.map(track => track.id));
-      
-      // 5. Filter and rank tracks based on audio features and book genre
-      const rankedTracks = rankTracksByRelevance(allTracks, audioFeatures, bookGenre || "");
-      
-      // 6. Get the top 20 tracks
-      const selectedTracks = rankedTracks.slice(0, 20);
-      console.log(`Selected ${selectedTracks.length} tracks for the playlist`);
-      
-      if (selectedTracks.length === 0) {
-        throw new Error("No suitable tracks found for the given book");
-      }
-      
-      // 7. Create a playlist
-      const playlistName = `Bookify: ${bookTitle}`;
-      const playlistDescription = `A playlist inspired by "${bookTitle}"${bookAuthor ? ` by ${bookAuthor}` : ""}`;
-      
-      const createPlaylistResponse = await fetch(
-        `https://api.spotify.com/v1/users/${userId}/playlists`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            name: playlistName,
-            description: playlistDescription,
-            public: true,
-          }),
-        }
-      );
-      
-      if (!createPlaylistResponse.ok) {
-        throw new Error("Failed to create playlist");
-      }
-      
-      const playlist = await createPlaylistResponse.json();
-      
-      // 8. Add tracks to the playlist
-      if (selectedTracks.length > 0) {
-        const addTracksResponse = await fetch(
-          `https://api.spotify.com/v1/playlists/${playlist.id}/tracks`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              uris: selectedTracks.map(track => track.uri),
-            }),
-          }
+      try {
+        // Create a playlist with the mock tracks
+        const playlistName = `Bookify: ${bookTitle}`;
+        const playlist = await createSpotifyPlaylist(
+          playlistName,
+          `A playlist inspired by "${bookTitle}" ${bookAuthor ? `by ${bookAuthor}` : ""}`,
+          mockTracks.map((track) => track.uri),
+          accessToken
         );
-        
-        if (!addTracksResponse.ok) {
-          throw new Error("Failed to add tracks to playlist");
-        }
+
+        console.log("Playlist created:", playlist.id);
+
+        // Format the response - using the exact same mock tracks for consistency
+        const formattedPlaylist = {
+          playlistId: playlist.id,
+          name: playlistName,
+          external_url: playlist.external_urls.spotify,
+          uri: playlist.uri,
+          tracks: mockTracks
+        };
+
+        return NextResponse.json(formattedPlaylist);
+      } catch (error: any) {
+        console.error("Error creating Spotify playlist:", error);
+        // Fall back to non-authenticated flow if playlist creation fails
+        console.log("Falling back to non-authenticated flow");
       }
-      
-      // 9. Format the response
-      const formattedPlaylist = {
-        playlistId: playlist.id,
-        name: playlistName,
-        external_url: playlist.external_urls.spotify,
-        uri: playlist.uri,
-        tracks: selectedTracks.map(track => ({
-          name: track.name,
-          artist: track.artists[0].name,
-          album: track.album.name,
-          image: track.album.images[0]?.url,
-          uri: track.uri,
-        })),
-      };
-      
-      return NextResponse.json(formattedPlaylist);
-    } else {
-      // Non-authenticated user flow - generate mock tracks
-      console.log("Generating mock tracks for non-authenticated user");
-      const tracks = generateMockTracks(searchQueries, bookGenre || "");
-      
-      // Ensure we have tracks
-      console.log(`Generated ${tracks.length} mock tracks`);
-      
-      // Make sure tracks is never undefined or null
-      const safeTrackList = tracks && tracks.length > 0 ? tracks : [];
-      
-      // Format the response to match the playlist data structure
-      const playlistData = {
-        playlistId: null,
-        name: `Bookify: ${bookTitle}`,
-        external_url: "https://open.spotify.com/",
-        uri: null,
-        tracks: safeTrackList.map(track => ({
-          ...track,
-          uri: track.uri.startsWith("spotify:track:") ? track.uri : `spotify:track:${track.uri}`
-        })),
-      };
-      
-      console.log(`Returning playlist with ${playlistData.tracks.length} tracks`);
-      return NextResponse.json(playlistData);
     }
+    
+    // Non-authenticated user flow (or fallback if authenticated creation failed)
+    console.log("Returning tracks for display only");
+    
+    // Format the response to match the playlist data structure
+    const playlistData = {
+      playlistId: null,
+      name: `Bookify: ${bookTitle}`,
+      external_url: "https://open.spotify.com/",
+      uri: null,
+      tracks: mockTracks
+    };
+    
+    console.log(`Returning playlist with ${playlistData.tracks.length} tracks`);
+    return NextResponse.json(playlistData);
+    
   } catch (error) {
     console.error("Error generating playlist:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to generate playlist" },
+      { error: "Failed to generate playlist" },
       { status: 500 }
     );
   }
 }
 
-// Helper function to search Spotify tracks
-async function searchSpotifyTracks(accessToken: string, query: string, limit = 10): Promise<SpotifyTrack[]> {
-  const response = await fetch(
-    `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=${limit}&market=US`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    }
-  );
-  
-  if (!response.ok) {
-    throw new Error("Failed to search tracks");
-  }
-  
-  const data = await response.json();
-  return data.tracks.items || [];
-}
-
-// Get audio features for multiple tracks
-async function getAudioFeatures(accessToken: string, trackIds: string[]): Promise<SpotifyAudioFeatures[]> {
-  if (trackIds.length === 0) return [];
-  
-  // Spotify's API only allows 100 IDs per request
-  const chunks = [];
-  for (let i = 0; i < trackIds.length; i += 100) {
-    chunks.push(trackIds.slice(i, i + 100));
-  }
-  
-  const featuresPromises = chunks.map(async chunk => {
-    const response = await fetch(
-      `https://api.spotify.com/v1/audio-features?ids=${chunk.join(",")}`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
-    );
-    
-    if (!response.ok) {
-      throw new Error("Failed to get audio features");
-    }
-    
-    const data = await response.json();
-    return data.audio_features || [];
-  });
-  
-  const results = await Promise.all(featuresPromises);
-  return results.flat().filter(Boolean);
-}
-
-// Helper function to rank tracks by relevance to the book
-function rankTracksByRelevance(tracks: SpotifyTrack[], audioFeatures: SpotifyAudioFeatures[], bookGenre: string): SpotifyTrack[] {
-  // Create a map of track ID to audio features
-  const featuresMap = new Map<string, SpotifyAudioFeatures>();
-  audioFeatures.forEach(feature => {
-    if (feature && feature.id) {
-      featuresMap.set(feature.id, feature);
-    }
-  });
-  
-  // Determine target features based on book genre
-  let targetFeatures = GENRE_AUDIO_FEATURES.default;
-  const lowerGenre = bookGenre.toLowerCase();
-  
-  // Try to match the genre to one of our predefined genre features
-  Object.keys(GENRE_AUDIO_FEATURES).forEach(genre => {
-    if (lowerGenre.includes(genre)) {
-      targetFeatures = GENRE_AUDIO_FEATURES[genre];
-    }
-  });
-  
-  // Add a score to each track based on how well it matches the target features
-  const scoredTracks = tracks.map(track => {
-    const features = featuresMap.get(track.id);
-    
-    // If we don't have features for this track, give it a neutral score
-    if (!features) {
-      return { track, score: 0.5 };
-    }
-    
-    // Start with a base score of 1
-    let score = 1;
-    
-    // Calculate valence score (how positive/negative the track is)
-    if (features.valence !== undefined) {
-      const valenceScore = calculateFeatureScore(
-        features.valence,
-        targetFeatures.valence.min,
-        targetFeatures.valence.max,
-        targetFeatures.valence.target
-      );
-      score *= valenceScore;
-    }
-    
-    // Calculate energy score
-    if (features.energy !== undefined) {
-      const energyScore = calculateFeatureScore(
-        features.energy,
-        targetFeatures.energy.min,
-        targetFeatures.energy.max,
-        targetFeatures.energy.target
-      );
-      score *= energyScore;
-    }
-    
-    return { track, score };
-  });
-  
-  // Sort by score (highest first) and return just the tracks
-  return scoredTracks
-    .sort((a, b) => b.score - a.score)
-    .map(item => item.track);
-}
-
-// Calculate a score for how well a feature matches the target
-function calculateFeatureScore(
-  value: number, 
-  min?: number, 
-  max?: number, 
-  target?: number
-): number {
-  // If there's a target value, score based on proximity
-  if (target !== undefined) {
-    const distance = Math.abs(value - target);
-    return Math.max(0.1, 1 - distance); // Ensure a minimum score of 0.1
-  }
-  
-  // If there's a min value but no max, score based on how much above min
-  if (min !== undefined && max === undefined) {
-    if (value < min) return 0.2; // Below minimum gets a low score
-    const scoreAboveMin = 0.5 + (value - min) * 0.5; // Higher values get better scores
-    return Math.min(1, scoreAboveMin); // Cap at 1
-  }
-  
-  // If there's a max value but no min, score based on how much below max
-  if (max !== undefined && min === undefined) {
-    if (value > max) return 0.2; // Above maximum gets a low score
-    const scoreBelowMax = 0.5 + (max - value) * 0.5; // Lower values get better scores
-    return Math.min(1, scoreBelowMax); // Cap at 1
-  }
-  
-  // If there's both a min and max, score based on being in range
-  if (min !== undefined && max !== undefined) {
-    if (value < min || value > max) return 0.2; // Outside range gets a low score
-    
-    // Inside range gets a score between 0.5 and 1 based on position in the range
-    const position = (value - min) / (max - min);
-    const adjustedPosition = Math.abs(position - 0.5) * 2; // 0 at the center, 1 at the edges
-    return 0.5 + (1 - adjustedPosition) * 0.5; // 1 at the center, 0.5 at the edges
-  }
-  
-  // Default score if no constraints were provided
-  return 0.5;
-}
-
-// Helper function to generate search queries based on book information
-function generateSearchQueries(
-  title: string,
-  author?: string,
-  genre?: string,
-  description?: string
-): string[] {
-  const queries = [];
-  
-  // Add title and author combination
-  if (author) {
-    queries.push(`${title} ${author}`);
-  }
-  
-  // Add genre-based queries
-  if (genre) {
-    const lowerGenre = genre.toLowerCase();
-    
-    if (lowerGenre.includes("romance")) {
-      queries.push("love songs", "romantic", `${genre} music`);
-    } else if (lowerGenre.includes("thriller") || lowerGenre.includes("mystery")) {
-      queries.push("suspense", "tension", "dark", `${genre} soundtrack`);
-    } else if (lowerGenre.includes("fantasy")) {
-      queries.push("epic", "magical", "fantasy soundtrack", `${genre} theme`);
-    } else if (lowerGenre.includes("sci-fi") || lowerGenre.includes("science fiction")) {
-      queries.push("electronic", "futuristic", "space", `${genre} soundtrack`);
-    } else {
-      queries.push(genre);
-    }
-  }
-  
-  // Add description-based queries if available
-  if (description) {
-    // Extract key themes from description
-    const words = description
-      .toLowerCase()
-      .replace(/[^\w\s]/g, '')
-      .split(/\s+/)
-      .filter(word => 
-        word.length > 4 && 
-        !["about", "which", "there", "their", "other", "another"].includes(word)
-      );
-    
-    // Get unique words
-    const uniqueWords = [...new Set(words)];
-    
-    // Take up to 3 significant words from description
-    const significantWords = uniqueWords.slice(0, 3);
-    
-    if (significantWords.length > 0) {
-      queries.push(significantWords.join(" "));
-    }
-  }
-  
-  // Add some generic queries based on title
-  queries.push(`${title} soundtrack`, `${title} theme`, "instrumental");
-  
-  // Remove duplicates and return
-  return [...new Set(queries)];
-}
-
-// Define track interface for mock tracks
-interface MockTrack {
-  name: string;
-  artist: string;
-  album: string;
-  image: string;
-  uri: string;
-}
-
 // Define fallback tracks to ensure we always have something to display
-const FALLBACK_TRACKS: MockTrack[] = [
+const FALLBACK_TRACKS = [
   {
     name: "Bohemian Rhapsody",
     artist: "Queen",
@@ -466,10 +180,10 @@ const FALLBACK_TRACKS: MockTrack[] = [
   }
 ];
 
-// Generate mock tracks based on search queries and genre
-function generateMockTracks(searchQueries: string[], genre: string): MockTrack[] {
-  // Enhanced mock track pool with more varied songs and valid image URLs
-  const mockTrackPool: MockTrack[] = [
+// Generate tracks based on search queries and genre
+function generateMockTracks(searchQueries: string[], genre: string) {
+  // Mock track pool with real Spotify track IDs
+  const mockTrackPool = [
     // Romance themed tracks
     {
       name: "Can't Help Falling in Love",
@@ -584,7 +298,7 @@ function generateMockTracks(searchQueries: string[], genre: string): MockTrack[]
   ];
 
   // Select genre-appropriate tracks based on book genre
-  const genreSpecificTracks: MockTrack[] = [];
+  const genreSpecificTracks = [];
   const lowerGenre = genre.toLowerCase();
   
   // First pass: select genre-specific tracks
@@ -603,7 +317,7 @@ function generateMockTracks(searchQueries: string[], genre: string): MockTrack[]
   }
   
   // Create a selection of tracks based on book information
-  const selectedTracks: MockTrack[] = [...genreSpecificTracks];
+  const selectedTracks = [...genreSpecificTracks];
   const usedTrackIndices = new Set(genreSpecificTracks.map((_, i) => i));
   
   // Second pass: add tracks based on search queries
