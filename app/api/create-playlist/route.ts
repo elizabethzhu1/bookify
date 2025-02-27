@@ -192,11 +192,14 @@ export async function POST(request: Request) {
       
       // Format the response to match the playlist data structure
       const playlistData = {
-        playlistId: null, // No actual playlist ID since we're not creating one
+        playlistId: null,
         name: `Bookify: ${bookTitle}`,
-        external_url: null,
+        external_url: "https://open.spotify.com/",
         uri: null,
-        tracks: safeTrackList,
+        tracks: safeTrackList.map(track => ({
+          ...track,
+          uri: track.uri.startsWith("spotify:track:") ? track.uri : `spotify:track:${track.uri}`
+        })),
       };
       
       return NextResponse.json(playlistData);
@@ -446,7 +449,7 @@ function generateMockTracks(searchQueries: string[], genre: string): MockTrack[]
       artist: "Elvis Presley",
       album: "Blue Hawaii",
       image: "https://i.scdn.co/image/ab67616d0000b273f947f3521c3a2f64747b0d12",
-      uri: "spotify:track:romance1"
+      uri: "spotify:track:44AyOl4qVkzS48vBsbNXaC"
     },
     {
       name: "At Last",
