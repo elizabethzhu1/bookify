@@ -5,10 +5,9 @@ export async function POST(request: Request) {
   try {
     const { code, state } = await request.json();
     
-    // Get stored state and code verifier from cookies
+    // Get stored state from cookies
     const cookieStore = cookies();
     const storedState = cookieStore.get("spotify_auth_state")?.value;
-    const codeVerifier = cookieStore.get("spotify_code_verifier")?.value;
     
     // Verify state parameter to prevent CSRF attacks
     if (!storedState || state !== storedState) {
@@ -25,15 +24,11 @@ export async function POST(request: Request) {
       );
     }
     
-    if (!codeVerifier) {
-      return NextResponse.json(
-        { error: "Code verifier not found" },
-        { status: 400 }
-      );
-    }
+    // Configure the redirect URI
+    const redirectUri = process.env.NODE_ENV === "production" 
+      ? "https://bookify-v1.vercel.app/callback"
+      : "http://localhost:3000/callback";
     
-    // Exchange code for token using the fixed production redirect URI
-    const redirectUri = "https://bookify-v1.vercel.app/callback";
     const clientId = process.env.SPOTIFY_CLIENT_ID;
     const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
     
@@ -54,7 +49,6 @@ export async function POST(request: Request) {
         grant_type: "authorization_code",
         code,
         redirect_uri: redirectUri,
-        code_verifier: codeVerifier,
       }),
     });
     
@@ -69,12 +63,12 @@ export async function POST(request: Request) {
     
     const tokenData = await tokenResponse.json();
     
-    // Set cookies with the token data (secure httpOnly cookies)
+    // Set cookies with the token data
     const response = NextResponse.json({ success: true });
     
     const cookieOptions = {
       httpOnly: true,
-      secure: true,
+      secure: process.env.NODE_ENV === "production",
       sameSite: "lax" as const,
       path: "/",
     };
@@ -92,13 +86,8 @@ export async function POST(request: Request) {
       });
     }
     
-    // Clear the state and code verifier cookies
+    // Clear the state cookie
     response.cookies.set("spotify_auth_state", "", {
-      ...cookieOptions,
-      maxAge: 0,
-    });
-    
-    response.cookies.set("spotify_code_verifier", "", {
       ...cookieOptions,
       maxAge: 0,
     });

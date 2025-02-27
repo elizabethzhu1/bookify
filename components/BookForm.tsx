@@ -200,7 +200,12 @@ export default function BookForm() {
         });
         
         if (playlistResponse.ok) {
-          const playlistData = await playlistResponse.json();
+          const data = await playlistResponse.json();
+          // Ensure tracks is always an array even if it's missing from the API response
+          const playlistData = {
+            ...data,
+            tracks: data.tracks || []
+          };
           setPlaylistData(playlistData);
         } else {
           const errorData = await playlistResponse.json();
@@ -209,30 +214,14 @@ export default function BookForm() {
       } catch (error) {
         console.error("Playlist generation error:", error);
         
-        if (!isAuthenticated) {
-          // Fall back to suggest-tracks for non-authenticated users if create-playlist fails
-          const suggestResponse = await fetch(`${getBaseUrl()}/api/suggest-tracks`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              bookTitle: selectedBook.title,
-              bookAuthor: selectedBook.author,
-              bookGenre: selectedBook.genre,
-              bookDescription: selectedBook.description,
-            }),
-          });
-          
-          if (suggestResponse.ok) {
-            const suggestData = await suggestResponse.json();
-            setPlaylistData(suggestData);
-          } else {
-            throw new Error("Failed to generate track suggestions");
-          }
-        } else {
-          throw error; // Re-throw for authenticated users
-        }
+        // Fallback if authentication or API has issues
+        setPlaylistData({
+          playlistId: null,
+          name: `Bookify: ${selectedBook.title}`,
+          external_url: null,
+          uri: null,
+          tracks: [] // Always provide at least an empty array
+        });
       }
       
       // Generate book recommendations regardless of authentication status
@@ -463,26 +452,36 @@ export default function BookForm() {
                 ) : (
                   // Track list for non-authenticated users
                   <div className="space-y-3 max-h-[380px] overflow-y-auto pr-2">
-                    {playlistData.tracks.map((track, index) => (
-                      <div key={index} className="flex items-center space-x-3 p-2 rounded-md bg-gray-100 dark:bg-gray-800">
-                        {track.image ? (
-                          <img 
-                            src={track.image} 
-                            alt={track.album}
-                            className="w-12 h-12 rounded-md object-cover"
-                          />
-                        ) : (
-                          <div className="w-12 h-12 rounded-md bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-                            <Music className="w-6 h-6 text-gray-400" />
+                    {playlistData && playlistData.tracks && playlistData.tracks.length > 0 ? (
+                      playlistData.tracks.map((track, index) => (
+                        <div key={index} className="flex items-center space-x-3 p-2 rounded-md bg-gray-100 dark:bg-gray-800">
+                          {track.image ? (
+                            <img 
+                              src={track.image} 
+                              alt={`${track.album} cover`}
+                              className="w-12 h-12 rounded-md object-cover"
+                              onError={(e) => {
+                                // Fallback image if the album cover is broken
+                                e.currentTarget.src = "https://i.scdn.co/image/ab67616d0000b2731e173bb4e0f8ef205d51a987";
+                              }}
+                            />
+                          ) : (
+                            <div className="w-12 h-12 rounded-md bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                              <Music className="w-6 h-6 text-gray-400" />
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-gray-900 dark:text-white truncate">{track.name}</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{track.artist}</p>
+                            <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{track.album}</p>
                           </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-gray-900 dark:text-white truncate">{track.name}</p>
-                          <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{track.artist}</p>
-                          <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{track.album}</p>
                         </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-6 text-gray-500">
+                        No tracks available for this playlist.
                       </div>
-                    ))}
+                    )}
                   </div>
                 )}
                 

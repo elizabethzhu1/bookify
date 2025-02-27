@@ -10,23 +10,13 @@ export async function GET() {
       throw new Error("Spotify client ID not configured");
     }
     
-    // Always use the production redirect URI
-    const redirectUri = "https://bookify-v1.vercel.app/callback";
+    // Configure the redirect URI
+    const redirectUri = process.env.NODE_ENV === "production" 
+      ? "https://bookify-v1.vercel.app/callback"
+      : "http://localhost:3000/callback";
     
     // Generate a random state value for security
     const state = generateRandomString(16);
-    
-    // Generate a code verifier and challenge for PKCE
-    const codeVerifier = generateRandomString(64);
-    
-    // Store the code verifier in a cookie for later use
-    const cookieOptions = {
-      httpOnly: true,
-      secure: true,
-      sameSite: "lax" as const,
-      path: "/",
-      maxAge: 60 * 10, // 10 minutes
-    };
     
     // Define the scopes we need
     const scope = "user-read-private user-read-email playlist-modify-public playlist-modify-private user-top-read";
@@ -38,16 +28,20 @@ export async function GET() {
       scope: scope,
       redirect_uri: redirectUri,
       state: state,
-      code_challenge_method: "S256",
-      code_challenge: codeVerifier, // Simplified for this example
+      show_dialog: "true"
     });
     
     const authUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
     
-    // Set cookies and return the auth URL
+    // Set state cookie for verification
     const response = NextResponse.json({ authUrl });
-    response.cookies.set("spotify_auth_state", state, cookieOptions);
-    response.cookies.set("spotify_code_verifier", codeVerifier, cookieOptions);
+    response.cookies.set("spotify_auth_state", state, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 10, // 10 minutes
+    });
     
     return response;
   } catch (error) {
