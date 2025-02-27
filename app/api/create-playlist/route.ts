@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { searchSpotifyTracks, createSpotifyPlaylist, getAudioFeatures } from "@/utils/spotify";
+import { generateBookPlaylistRecommendations } from "@/utils/openai";
 
 // Define types for audio features
 interface AudioFeatureTarget {
@@ -129,35 +130,40 @@ export async function POST(request: Request) {
     
     console.log("Generating playlist for:", bookTitle, "Genre:", bookGenre);
     
-    // Process the genre to identify its core type
-    const normalizedGenre = normalizeGenre(bookGenre || "");
-    console.log("Normalized genre:", normalizedGenre);
-    
-    // Determine literary period if book year is available
-    let literaryPeriod: string | null = null;
-    if (bookYear) {
-      literaryPeriod = getLiteraryPeriod(Number(bookYear));
-      console.log("Literary period:", literaryPeriod);
-    }
-    
-    // Calculate target playlist duration based on book length
-    const estimatedReadingTime = calculateReadingTime(pageCount);
-    console.log(`Book has ${pageCount} pages, estimated reading time: ${Math.round(estimatedReadingTime/60000)} minutes`);
-    
-    // Enhanced search queries based on book information and genre
-    const searchQueries = generateSearchQueries(
-      bookTitle, 
-      bookAuthor, 
-      normalizedGenre, 
+    // Get OpenAI recommendations for this book
+    console.log("Requesting AI recommendations...");
+    const aiRecommendations = await generateBookPlaylistRecommendations(
+      bookTitle,
+      bookAuthor,
+      bookGenre || "",
       bookDescription || "",
-      literaryPeriod
+      bookYear || ""
     );
     
-    console.log("Enhanced search queries:", searchQueries);
+    console.log("AI themes:", aiRecommendations.themes);
+    console.log("AI mood:", aiRecommendations.moodDescription);
+    console.log("AI recommended songs:", aiRecommendations.songRecommendations.length);
+    
+    // Create specialized search queries from the AI recommendations
+    const bookQueries = generateSearchQueries(
+      bookTitle, 
+      bookAuthor, 
+      normalizeGenre(bookGenre || ""),
+      bookDescription || "",
+      getLiteraryPeriod(Number(bookYear))
+    );
+    
+    // Add AI-recommended song queries
+    const songQueries = aiRecommendations.songRecommendations.map(rec => 
+      `${rec.title} ${rec.artist}`
+    );
+    
+    // Combine both query sets
+    const searchQueries = [...songQueries, ...bookQueries];
+    console.log("Search queries:", searchQueries);
     
     // Search for tracks using the search queries
     const trackResults = await searchTracksWithQueries(searchQueries, accessToken);
-    
     console.log("Found initial tracks:", trackResults.length);
     
     if (trackResults.length === 0) {
@@ -167,16 +173,16 @@ export async function POST(request: Request) {
       );
     }
     
-    // Enhance track selection with audio features if authenticated
+    // Enhance track selection with AI-suggested audio features
     let selectedTracks = trackResults;
     if (isAuthenticated && accessToken) {
       try {
-        selectedTracks = await enhanceTrackSelectionWithAudioFeatures(
+        selectedTracks = await enhanceTrackSelectionWithAIFeatures(
           trackResults, 
-          normalizedGenre, 
+          aiRecommendations.audioFeatureTargets,
           accessToken
         );
-        console.log("Enhanced tracks with audio features");
+        console.log("Enhanced tracks with AI-recommended audio features");
       } catch (error) {
         console.error("Error enhancing tracks with audio features:", error);
       }
@@ -185,7 +191,7 @@ export async function POST(request: Request) {
     // Match playlist duration to book reading time
     selectedTracks = await matchPlaylistDurationToReadingTime(
       selectedTracks,
-      estimatedReadingTime,
+      calculateReadingTime(pageCount),
       accessToken
     );
     
@@ -408,67 +414,80 @@ async function searchTracksWithQueries(queries: string[], accessToken?: string) 
   return filteredTracks.sort(() => Math.random() - 0.5);
 }
 
-// Enhance track selection using audio features
-async function enhanceTrackSelectionWithAudioFeatures(
-  tracks: any[], 
-  genre: string, 
+// Enhance track selection using AI-recommended audio features
+async function enhanceTrackSelectionWithAIFeatures(
+  tracks: any[],
+  targetFeatures: any,
   accessToken: string
-) {
-  if (tracks.length === 0) return tracks;
-  
-  // Get audio features for all tracks
-  const trackIds = tracks.map(track => track.id);
-  const audioFeatures = await getAudioFeatures(trackIds, accessToken);
-  
-  if (!audioFeatures || audioFeatures.length === 0) {
+): Promise<any[]> {
+  if (!accessToken || tracks.length === 0) {
     return tracks;
   }
   
-  // Get target audio features for this genre
-  const targetFeatures = GENRE_AUDIO_FEATURES[genre] || GENRE_AUDIO_FEATURES.default;
-  
-  // Create a map of track ID to audio features
-  const featuresMap = new Map();
-  audioFeatures.forEach(feature => {
-    if (feature && feature.id) {
-      featuresMap.set(feature.id, feature);
-    }
-  });
-  
-  // Score each track based on how well it matches the target features
-  const scoredTracks = tracks.map(track => {
-    const features = featuresMap.get(track.id);
-    let score = 0;
+  try {
+    // Get audio features for all tracks
+    const trackIds = tracks.map(track => track.id);
+    const audioFeatures = await getAudioFeatures(trackIds, accessToken);
     
-    if (features) {
-      // Score based on valence (mood)
-      const valenceTarget = targetFeatures.valence;
-      if (
-        (valenceTarget.min === undefined || features.valence >= valenceTarget.min) &&
-        (valenceTarget.max === undefined || features.valence <= valenceTarget.max)
-      ) {
-        // Higher score for closer to target
-        score += 10 - Math.abs(features.valence - valenceTarget.target) * 10;
+    if (!audioFeatures || audioFeatures.length === 0) {
+      return tracks;
+    }
+    
+    // Create a map of track ID to audio features
+    const featuresMap = new Map();
+    audioFeatures.forEach(feature => {
+      if (feature && feature.id) {
+        featuresMap.set(feature.id, feature);
+      }
+    });
+    
+    // Score each track based on how well it matches the AI-suggested targets
+    const scoredTracks = tracks.map(track => {
+      const features = featuresMap.get(track.id);
+      let score = 0;
+      
+      if (features) {
+        // Calculate score based on closeness to target values
+        if (targetFeatures.valence !== undefined) {
+          score += 10 - Math.abs(features.valence - targetFeatures.valence) * 10;
+        }
+        
+        if (targetFeatures.energy !== undefined) {
+          score += 10 - Math.abs(features.energy - targetFeatures.energy) * 10;
+        }
+        
+        if (targetFeatures.danceability !== undefined) {
+          score += 10 - Math.abs(features.danceability - targetFeatures.danceability) * 10;
+        }
+        
+        // Add bonus for exact matches of AI-recommended songs
+        if (track.name && track.artists && track.artists.length > 0) {
+          const trackNameArtist = `${track.name} ${track.artists[0].name}`.toLowerCase();
+          
+          // Check if this is one of the AI-recommended songs
+          const isRecommended = aiRecommendations.songRecommendations.some(rec => {
+            const recString = `${rec.title} ${rec.artist}`.toLowerCase();
+            return trackNameArtist.includes(recString) || recString.includes(trackNameArtist);
+          });
+          
+          if (isRecommended) {
+            score += 20; // Big bonus for AI-recommended songs
+          }
+        }
       }
       
-      // Score based on energy
-      const energyTarget = targetFeatures.energy;
-      if (
-        (energyTarget.min === undefined || features.energy >= energyTarget.min) &&
-        (energyTarget.max === undefined || features.energy <= energyTarget.max)
-      ) {
-        // Higher score for closer to target
-        score += 10 - Math.abs(features.energy - energyTarget.target) * 10;
-      }
-    }
+      return { track, score };
+    });
     
-    return { track, score };
-  });
-  
-  // Sort by score (descending) and return tracks
-  return scoredTracks
-    .sort((a, b) => b.score - a.score)
-    .map(item => item.track);
+    // Sort by score (descending) and return tracks
+    return scoredTracks
+      .sort((a, b) => b.score - a.score)
+      .map(item => item.track);
+    
+  } catch (error) {
+    console.error("Error enhancing tracks with AI features:", error);
+    return tracks;
+  }
 }
 
 // Generate a descriptive playlist description
