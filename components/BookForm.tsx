@@ -53,6 +53,10 @@ export default function BookForm() {
   const dropdownRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Update the state management section at the top of the component
+  const [isDescriptionLoading, setIsDescriptionLoading] = useState(false)
+  const [isPlaylistLoading, setIsPlaylistLoading] = useState(false)
+
   // Get the base URL for API calls (works in both production and development)
   const getBaseUrl = () => {
     if (typeof window !== 'undefined') {
@@ -173,76 +177,69 @@ export default function BookForm() {
 
   const handleGenerate = async () => {
     setError("");
-    setIsGenerating(true);
-    setBookDescription("");
-    setPlaylistData(null);
     setBookRecommendations([]);
+    setPlaylistData(null);
     
     if (!selectedBook) {
       setError("Please select a book first");
-      setIsGenerating(false);
       return;
     }
 
+    // Immediately set the book description - no waiting
+    setBookDescription(selectedBook.description || "No description available for this book.");
+
+    // Start playlist generation in parallel
+    setIsPlaylistLoading(true);
+    
     try {
-      // Use the book description directly from the Google Books API
-      setBookDescription(selectedBook.description || "No description available for this book.");
+      // Generate playlist
+      const playlistResponse = await fetch(`${getBaseUrl()}/api/create-playlist`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          bookTitle: selectedBook.title,
+          bookAuthor: selectedBook.author,
+          bookGenre: selectedBook.genre,
+          bookDescription: selectedBook.description,
+          pageCount: selectedBook.pageCount || 0,
+          bookYear: selectedBook.publishedDate
+        }),
+      });
       
-      // Call the same endpoint for all users
-      try {
-        const playlistResponse = await fetch(`${getBaseUrl()}/api/create-playlist`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            bookTitle: selectedBook.title,
-            bookAuthor: selectedBook.author,
-            bookGenre: selectedBook.genre,
-            bookDescription: selectedBook.description,
-            pageCount: selectedBook.pageCount || 0,
-            bookYear: selectedBook.publishedDate
-          }),
-        });
+      if (playlistResponse.ok) {
+        const responseData = await playlistResponse.json();
+        console.log("Playlist API response:", responseData);
         
-        if (playlistResponse.ok) {
-          const responseData = await playlistResponse.json();
-          console.log("Playlist API response:", responseData);
-          
-          // Ensure tracks is always an array with proper data
-          const tracks = Array.isArray(responseData.tracks) ? responseData.tracks : [];
-          
-          // Create a cleaned playlist data object
-          const cleanedPlaylistData = {
-            ...responseData,
-            tracks: tracks.length > 0 ? tracks : [], // Ensure tracks is valid array
-          };
-          
-          console.log("Setting playlist data with tracks:", cleanedPlaylistData.tracks.length);
-          setPlaylistData(cleanedPlaylistData);
-        } else {
-          const errorData = await playlistResponse.json();
-          throw new Error(errorData.error || "Failed to generate playlist");
-        }
-      } catch (error) {
-        console.error("Playlist generation error:", error);
+        // Ensure tracks is always an array with proper data
+        const tracks = Array.isArray(responseData.tracks) ? responseData.tracks : [];
         
-        // Fallback with default empty tracks
-        setPlaylistData({
-          playlistId: null,
-          name: `Bookify: ${selectedBook.title}`,
-          external_url: null,
-          uri: null,
-          tracks: []
-        });
+        // Create a cleaned playlist data object
+        const cleanedPlaylistData = {
+          ...responseData,
+          tracks: tracks.length > 0 ? tracks : [], // Ensure tracks is valid array
+        };
+        
+        console.log("Setting playlist data with tracks:", cleanedPlaylistData.tracks.length);
+        setPlaylistData(cleanedPlaylistData);
+      } else {
+        const errorData = await playlistResponse.json();
+        throw new Error(errorData.error || "Failed to generate playlist");
       }
-      
-      
     } catch (error) {
-      console.error("Generation error:", error);
-      setError("Failed to generate content. Please try again.");
+      console.error("Playlist generation error:", error);
+      
+      // Fallback with default empty tracks
+      setPlaylistData({
+        playlistId: null,
+        name: `Bookify: ${selectedBook.title}`,
+        external_url: null,
+        uri: null,
+        tracks: []
+      });
     } finally {
-      setIsGenerating(false);
+      setIsPlaylistLoading(false);
     }
   };
 
@@ -351,11 +348,7 @@ export default function BookForm() {
           {/* Book description card */}
           <Card className="p-4">
             <h3 className="text-lg font-semibold mb-2">Book Description</h3>
-            {isGenerating ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-              </div>
-            ) : bookDescription ? (
+            {bookDescription ? (
               <div className="prose max-w-none">
                 <div dangerouslySetInnerHTML={{ __html: bookDescription }} />
               </div>
@@ -368,7 +361,7 @@ export default function BookForm() {
           
           {/* Spotify playlist or track list */}
           <Card className="p-4">
-            {isGenerating ? (
+            {isPlaylistLoading ? (
               // Show loading state for playlist generation
               <>
                 <h3 className="text-lg font-semibold mb-2">
@@ -383,7 +376,7 @@ export default function BookForm() {
               // Show playlist when data is available
               <>
                 <h3 className="text-lg font-semibold mb-2">
-                  {isAuthenticated ? "Book Playlist" : "Suggested Tracks"}
+                  Book Playlist
                 </h3>
                 
                 {isAuthenticated && playlistData.playlistId ? (
@@ -400,24 +393,8 @@ export default function BookForm() {
                     ></iframe>
                   </div>
                 ) : (
-                  // Non-authenticated user - show simple track list without embedding
+                  // Non-authenticated user - show track list
                   <div>
-                    <div className="mb-4 flex justify-center">
-                      <Button 
-                        className="bg-[#1DB954] hover:bg-[#1ed760] text-white"
-                        onClick={() => {
-                          // Open the first track in Spotify
-                          const trackId = playlistData.tracks[0]?.uri.split(':')[2];
-                          if (trackId) {
-                            window.open(`https://open.spotify.com/track/${trackId}`, "_blank");
-                          }
-                        }}
-                      >
-                        <Music className="w-4 h-4 mr-2" />
-                        Open in Spotify
-                      </Button>
-                    </div>
-                    
                     <div className="space-y-3 max-h-[380px] overflow-y-auto pr-2">
                       {playlistData && Array.isArray(playlistData.tracks) && playlistData.tracks.length > 0 ? (
                         playlistData.tracks.map((track, index) => (
@@ -458,26 +435,9 @@ export default function BookForm() {
                 {!isAuthenticated && (
                   <div className="mt-4 text-center">
                     <p className="text-sm text-green-600 mb-2">
-                      Connect with Spotify to create this playlist in your account
+                      Connect with Spotify to hear this playlist
                     </p>
                   </div>
-                )}
-              </>
-            ) : bookRecommendations.length > 0 ? (
-              <>
-                <h3 className="text-lg font-semibold mb-2">Book Recommendations</h3>
-                {isGenerating ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-                  </div>
-                ) : (
-                  <ul className="list-disc pl-5 space-y-2">
-                    {bookRecommendations.map((book, index) => (
-                      <li key={index} className="text-gray-800 dark:text-gray-200">
-                        {book}
-                      </li>
-                    ))}
-                  </ul>
                 )}
               </>
             ) : (
