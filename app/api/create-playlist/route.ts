@@ -114,7 +114,7 @@ const MAX_PLAYLIST_DURATION_MS = 180 * 60 * 1000; // 3 hours maximum
 
 export async function POST(request: Request) {
   try {
-    const { bookTitle, bookAuthor, bookGenre, bookDescription, bookYear, pageCount } = await request.json();
+    const { bookTitle, bookAuthor, bookGenre, bookDescription, pageCount } = await request.json();
     
     if (!bookTitle || !bookAuthor) {
       return NextResponse.json(
@@ -123,121 +123,78 @@ export async function POST(request: Request) {
       );
     }
     
-    // Check authentication status
+    // Get the user's Spotify access token
     const cookieStore = cookies();
-    const accessToken = cookieStore.get("spotify_access_token")?.value;
+    const accessToken = cookieStore.get('spotify_access_token')?.value;
     const isAuthenticated = !!accessToken;
     
-    console.log("Generating playlist for:", bookTitle, "Genre:", bookGenre);
+    console.log(`Creating playlist for "${bookTitle}" - Authenticated: ${isAuthenticated}`);
     
-    // Get OpenAI recommendations for this book (with error handling)
-    console.log("Requesting AI recommendations...");
-    let aiRecommendations;
-    try {
-      aiRecommendations = await generateBookPlaylistRecommendations(
-        bookTitle,
-        bookAuthor,
-        bookGenre || "",
-        bookDescription || "",
-        bookYear || ""
-      );
-      
-      console.log("AI themes:", aiRecommendations.themes);
-      console.log("AI mood:", aiRecommendations.moodDescription);
-      console.log("AI recommended songs:", aiRecommendations.songRecommendations.length);
-    } catch (error) {
-      console.error("Error getting AI recommendations:", error);
-      // Provide fallback recommendations
-      aiRecommendations = {
-        songRecommendations: [],
-        audioFeatureTargets: {
-          valence: 0.5,
-          energy: 0.5,
-          danceability: 0.5,
-        },
-        themes: [],
-        moodDescription: "Default mood"
-      };
-    }
-    
-    // Create specialized search queries from the AI recommendations
-    const bookQueries = generateSearchQueries(
-      bookTitle, 
-      bookAuthor, 
-      normalizeGenre(bookGenre || ""),
-      bookDescription || "",
-      getLiteraryPeriod(Number(bookYear))
-    );
-    
-    // Add AI-recommended song queries
-    const songQueries = aiRecommendations.songRecommendations.map(rec => 
-      `${rec.title} ${rec.artist}`
-    );
-    
-    // Combine both query sets
-    const searchQueries = [...songQueries, ...bookQueries];
-    console.log("Search queries:", searchQueries);
-    
-    // Search for tracks using the search queries
-    const trackResults = await searchTracksWithQueries(searchQueries, accessToken);
-    console.log("Found initial tracks:", trackResults.length);
-    
-    if (trackResults.length === 0) {
-      return NextResponse.json(
-        { error: "No tracks found for the given book" },
-        { status: 404 }
-      );
-    }
-    
-    // Enhance track selection with AI-suggested audio features
-    let selectedTracks = trackResults;
-    if (isAuthenticated && accessToken) {
-      try {
-        selectedTracks = await enhanceTrackSelectionWithAIFeatures(
-          trackResults, 
-          aiRecommendations.audioFeatureTargets,
-          accessToken
-        );
-        console.log("Enhanced tracks with AI-recommended audio features");
-      } catch (error) {
-        console.error("Error enhancing tracks with audio features:", error);
-      }
-    }
-    
-    // Match playlist duration to book reading time
-    selectedTracks = await matchPlaylistDurationToReadingTime(
-      selectedTracks,
-      calculateReadingTime(pageCount),
-      accessToken
-    );
-    
-    console.log(`Final playlist has ${selectedTracks.length} tracks with appropriate duration`);
-    
-    // Format tracks in our standard format
-    const formattedTracks: Track[] = selectedTracks.map(track => ({
-      name: track.name,
-      artist: track.artists[0].name,
-      album: track.album.name,
-      image: track.album.images[0]?.url,
-      uri: track.uri,
-    }));
+    // Generate playlist data
+    let playlistId = null;
+    let external_url = null;
+    let uri = null;
+    let tracks = [];
     
     if (isAuthenticated) {
       // Create a real Spotify playlist for authenticated users
       try {
+        console.log("Creating Spotify playlist with user token");
+        
+        // Get AI recommendations first
+        const aiRecommendations = await generateBookPlaylistRecommendations(
+          bookTitle,
+          bookAuthor,
+          bookGenre || "",
+          bookDescription || "",
+          ""
+        );
+        
+        // Generate search queries and get tracks
+        const searchQueries = generateSearchQueries(bookTitle, bookAuthor, bookGenre);
+        const allTracks = [];
+        
+        // Search for each query to build a pool of potential tracks
+        for (const query of searchQueries) {
+          const results = await searchSpotifyTracks(query, 15, accessToken);
+          if (results && results.length > 0) {
+            allTracks.push(...results);
+          }
+        }
+        
+        // Remove duplicates
+        const uniqueTracks = removeDuplicateTracks(allTracks);
+        
+        // Enhance track selection with audio features
+        const targetFeatures = aiRecommendations.audioFeatureTargets;
+        const enhancedTracks = await enhanceTrackSelectionWithAIFeatures(
+          uniqueTracks, 
+          targetFeatures,
+          accessToken
+        );
+        
+        // Match duration to reading time
+        const targetDurationMs = calculateReadingTime(pageCount);
+        console.log(`Target duration: ${Math.round(targetDurationMs/60000)} minutes`);
+        
+        const selectedTracks = await matchPlaylistDurationToReadingTime(
+          enhancedTracks,
+          targetDurationMs,
+          accessToken
+        );
+        
+        // Create the playlist in Spotify
         const playlistName = `Bookify: ${bookTitle}`;
-        const playlistDescription = `A playlist inspired by "${bookTitle}" by ${bookAuthor}`;
+        const playlistDescription = `A playlist inspired by "${bookTitle}" by ${bookAuthor}. Generated by Bookify.`;
         
-        console.log(`Creating playlist "${playlistName}" with ${selectedTracks.length} tracks`);
-        
-        // Format track URIs correctly and ensure we have valid URIs
+        // Get track URIs for the selected tracks
         const trackUris = selectedTracks
           .filter(track => track && track.uri && track.uri.startsWith('spotify:track:'))
           .map(track => track.uri);
         
-        console.log(`Adding ${trackUris.length} track URIs to playlist`);
+        console.log(`Creating playlist with ${trackUris.length} tracks`);
         
-        // Create the playlist with tracks
+        // Create the playlist in Spotify
         const playlist = await createSpotifyPlaylist(
           playlistName,
           playlistDescription,
@@ -245,49 +202,46 @@ export async function POST(request: Request) {
           accessToken
         );
         
-        // Verify we got a playlist ID back
-        if (!playlist || !playlist.id) {
-          throw new Error("Failed to create playlist - no ID returned");
-        }
+        console.log("Playlist created:", playlist);
         
-        console.log("Playlist created successfully with ID:", playlist.id);
+        // Format tracks for the response
+        tracks = selectedTracks.map(track => ({
+          name: track.name,
+          artist: track.artists && track.artists[0] ? track.artists[0].name : "Unknown",
+          album: track.album ? track.album.name : "Unknown",
+          image: track.album && track.album.images && track.album.images[0] ? track.album.images[0].url : null,
+          uri: track.uri
+        }));
         
-        // Add a small delay to allow Spotify to process the tracks
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Return formatted response with playlist ID for embedding
-        return NextResponse.json({
-          playlistId: playlist.id,
-          name: playlistName,
-          external_url: playlist.external_urls.spotify,
-          uri: playlist.uri,
-          tracks: formattedTracks
-        });
+        // Set the playlist info
+        playlistId = playlist.id;
+        external_url = playlist.external_urls.spotify;
+        uri = playlist.uri;
       } catch (error) {
-        console.error("Error creating Spotify playlist:", error);
-        // If playlist creation fails, fall back to non-authenticated mode
+        console.error("Error creating authenticated playlist:", error);
+        // Fall back to non-authenticated approach if playlist creation fails
       }
     }
     
-    // Non-authenticated user flow (or fallback if authenticated creation failed)
-    console.log("Returning tracks for display only");
+    // If no tracks were added (either not authenticated or creation failed),
+    // generate mock tracks
+    if (tracks.length === 0) {
+      console.log("Generating non-authenticated playlist");
+      const searchQueries = generateSearchQueries(bookTitle, bookAuthor, bookGenre);
+      tracks = generateMockTracks(searchQueries);
+    }
     
-    // Format the response to match the playlist data structure
-    const playlistData = {
-      playlistId: null,
+    return NextResponse.json({
+      playlistId,
       name: `Bookify: ${bookTitle}`,
-      external_url: "https://open.spotify.com/",
-      uri: null,
-      tracks: formattedTracks
-    };
-    
-    console.log(`Returning playlist with ${playlistData.tracks.length} tracks`);
-    return NextResponse.json(playlistData);
-    
-  } catch (error: any) {
-    console.error("Error generating playlist:", error);
+      external_url,
+      uri,
+      tracks
+    });
+  } catch (error) {
+    console.error("Error processing playlist request:", error);
     return NextResponse.json(
-      { error: error.message || "Failed to generate playlist" },
+      { error: "Failed to create playlist" },
       { status: 500 }
     );
   }

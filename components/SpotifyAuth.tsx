@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Loader2 } from "lucide-react"
+import Image from "next/image"
 
 export default function SpotifyAuth() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -65,47 +66,48 @@ export default function SpotifyAuth() {
 
   if (isLoading) {
     return (
-      <div className="mb-2">
-        <Button variant="outline" disabled className="bg-gray-700 text-gray-300">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Checking...
-        </Button>
-      </div>
+      <Button variant="outline" disabled className="bg-gray-700 text-gray-300">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        Checking...
+      </Button>
     )
   }
 
   if (isAuthenticated) {
     return (
-      <div className="mb-2">
-        <Button 
-          variant="outline" 
-          onClick={handleDisconnect}
-          disabled={isDisconnecting}
-          className="bg-red-600 hover:bg-red-700 text-white border-none"
-        >
-          {isDisconnecting ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Disconnecting...
-            </>
-          ) : (
-            "Disconnect from Spotify"
-          )}
-        </Button>
-      </div>
+      <Button 
+        variant="outline" 
+        onClick={handleDisconnect}
+        disabled={isDisconnecting}
+        className="bg-red-600 hover:bg-red-700 text-white border-none"
+      >
+        {isDisconnecting ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Disconnecting...
+          </>
+        ) : (
+          "Disconnect from Spotify"
+        )}
+      </Button>
     )
   }
 
   return (
-    <div className="mb-2">
-      <Button 
-        variant="outline" 
-        onClick={handleConnect}
-        className="bg-[#1DB954] hover:bg-[#1ed760] text-white border-none"
-      >
-        Connect with Spotify
-      </Button>
-    </div>
+    <Button 
+      variant="outline" 
+      onClick={handleConnect}
+      className="bg-[#118e3c] hover:bg-[#1ed760] text-white border-none flex items-center"
+    >
+      <Image 
+        src="/spotify.png" 
+        alt="Spotify logo" 
+        width={25} 
+        height={25} 
+        className="mr-2" 
+      />
+      Connect with Spotify
+    </Button>
   )
 }
 

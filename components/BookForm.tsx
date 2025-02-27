@@ -176,23 +176,18 @@ export default function BookForm() {
   }
 
   const handleGenerate = async () => {
+    // Reset states
     setError("");
     setBookRecommendations([]);
     setPlaylistData(null);
-    
-    if (!selectedBook) {
-      setError("Please select a book first");
-      return;
-    }
-
-    // Immediately set the book description - no waiting
-    setBookDescription(selectedBook.description || "No description available for this book.");
-
-    // Start playlist generation in parallel
     setIsPlaylistLoading(true);
     
     try {
-      // Generate playlist
+      // Immediately display the book description
+      setBookDescription(selectedBook.description || "No description available for this book.");
+      
+      // Create the playlist
+      console.log("Creating playlist for:", selectedBook.title);
       const playlistResponse = await fetch(`${getBaseUrl()}/api/create-playlist`, {
         method: "POST",
         headers: {
@@ -208,36 +203,34 @@ export default function BookForm() {
         }),
       });
       
-      if (playlistResponse.ok) {
-        const responseData = await playlistResponse.json();
-        console.log("Playlist API response:", responseData);
-        
-        // Ensure tracks is always an array with proper data
-        const tracks = Array.isArray(responseData.tracks) ? responseData.tracks : [];
-        
-        // Create a cleaned playlist data object
-        const cleanedPlaylistData = {
-          ...responseData,
-          tracks: tracks.length > 0 ? tracks : [], // Ensure tracks is valid array
-        };
-        
-        console.log("Setting playlist data with tracks:", cleanedPlaylistData.tracks.length);
-        setPlaylistData(cleanedPlaylistData);
-      } else {
-        const errorData = await playlistResponse.json();
-        throw new Error(errorData.error || "Failed to generate playlist");
+      if (!playlistResponse.ok) {
+        throw new Error(`Failed to create playlist: ${playlistResponse.status}`);
       }
+      
+      const playlistData = await playlistResponse.json();
+      console.log("Playlist created:", playlistData);
+      
+      // Verify we have a valid playlist ID for authenticated users
+      if (isAuthenticated && (!playlistData.playlistId || playlistData.playlistId === "null")) {
+        throw new Error("No valid playlist ID returned");
+      }
+      
+      // Set the playlist data
+      setPlaylistData(playlistData);
     } catch (error) {
       console.error("Playlist generation error:", error);
+      setError("Failed to create playlist. Please try again.");
       
-      // Fallback with default empty tracks
-      setPlaylistData({
-        playlistId: null,
-        name: `Bookify: ${selectedBook.title}`,
-        external_url: null,
-        uri: null,
-        tracks: []
-      });
+      // Provide fallback non-embedded playlist
+      if (selectedBook) {
+        setPlaylistData({
+          playlistId: null,
+          name: `Bookify: ${selectedBook.title}`,
+          external_url: null,
+          uri: null,
+          tracks: []
+        });
+      }
     } finally {
       setIsPlaylistLoading(false);
     }
@@ -382,16 +375,18 @@ export default function BookForm() {
                 {isAuthenticated && playlistData.playlistId ? (
                   // Authenticated user - show embedded playlist
                   <div className="w-full h-[380px]">
+                    {/* Log the playlist ID for debugging */}
+                    {console.log("Embedding playlist:", playlistData.playlistId)}
                     <iframe
                       src={`https://open.spotify.com/embed/playlist/${playlistData.playlistId}`}
-                      width="100%"
+                      width="100%" 
                       height="380"
                       frameBorder="0"
-                      allowTransparency={true}
-                      allow="encrypted-media autoplay"
+                      allowFullScreen={false}
+                      allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
                       loading="lazy"
                       className="rounded-md"
-                      style={{ border: 'none', width: '100%', height: '380px' }}
+                      style={{ border: 'none' }}
                     ></iframe>
                   </div>
                 ) : (
