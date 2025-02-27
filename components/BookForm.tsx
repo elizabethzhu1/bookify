@@ -28,10 +28,10 @@ interface Track {
 }
 
 interface PlaylistData {
-  playlistId: string
+  playlistId: string | null
   name: string
-  external_url: string
-  uri: string
+  external_url: string | null
+  uri: string | null
   tracks: Track[]
   verified: boolean
 }
@@ -482,11 +482,14 @@ export default function BookForm() {
                   </div>
                 )}
               </>
+            ) : (
+              <div className="text-gray-500 italic text-center py-8">
+                Click Generate to create a playlist based on your book selection.
+              </div>
             )}
           </Card>
         </div>
       )}
     </div>
-  )
+  );
 }
-
