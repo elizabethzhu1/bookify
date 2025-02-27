@@ -231,8 +231,6 @@ export default function BookForm() {
         });
       }
       
-      // Generate book recommendations regardless of authentication status
-      await generateBookRecommendations();
       
     } catch (error) {
       console.error("Generation error:", error);
@@ -241,79 +239,6 @@ export default function BookForm() {
       setIsGenerating(false);
     }
   };
-
-  const generateBookRecommendations = async () => {
-    try {
-      const recommendationsResponse = await fetch(`${getBaseUrl()}/api/book-recommendations`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          title: selectedBook?.title,
-          author: selectedBook?.author,
-          genre: selectedBook?.genre,
-        }),
-      })
-
-      if (!recommendationsResponse.ok) {
-        throw new Error("Failed to generate book recommendations")
-      }
-
-      const recommendationsData = await recommendationsResponse.json()
-      setBookRecommendations(recommendationsData.recommendations)
-    } catch (error) {
-      console.error("Error generating recommendations:", error)
-      // Fallback to static recommendations
-      setBookRecommendations(getStaticRecommendations(selectedBook?.genre || ""))
-    }
-  }
-
-  const getStaticRecommendations = (genre: string): string[] => {
-    const lowerGenre = genre.toLowerCase();
-    
-    if (lowerGenre.includes("fantasy")) {
-      return [
-        "The Name of the Wind by Patrick Rothfuss",
-        "A Game of Thrones by George R.R. Martin",
-        "The Way of Kings by Brandon Sanderson",
-        "The Fifth Season by N.K. Jemisin",
-        "Mistborn by Brandon Sanderson"
-      ];
-    } else if (lowerGenre.includes("sci-fi") || lowerGenre.includes("science fiction")) {
-      return [
-        "Dune by Frank Herbert",
-        "The Three-Body Problem by Liu Cixin",
-        "Project Hail Mary by Andy Weir",
-        "Neuromancer by William Gibson",
-        "The Left Hand of Darkness by Ursula K. Le Guin"
-      ];
-    } else if (lowerGenre.includes("mystery") || lowerGenre.includes("thriller")) {
-      return [
-        "Gone Girl by Gillian Flynn",
-        "The Silent Patient by Alex Michaelides",
-        "The Girl with the Dragon Tattoo by Stieg Larsson",
-        "And Then There Were None by Agatha Christie",
-        "The Thursday Murder Club by Richard Osman"
-      ];
-    } else if (lowerGenre.includes("romance")) {
-      return [
-        "Pride and Prejudice by Jane Austen",
-        "The Hating Game by Sally Thorne",
-        "Red, White & Royal Blue by Casey McQuiston",
-        "Beach Read by Emily Henry",
-        "The Kiss Quotient by Helen Hoang"
-      ];
-    } else {
-      return [
-        "The Night Circus by Erin Morgenstern",
-        "The Seven Husbands of Evelyn Hugo by Taylor Jenkins Reid",
-        "Where the Crawdads Sing by Delia Owens",
-        "Educated by Tara Westover",
-        "Circe by Madeline Miller"
-      ];
-    }
-  }
 
   return (
     <div className="w-full max-w-6xl mx-auto p-4 space-y-8">

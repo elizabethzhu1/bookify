@@ -74,60 +74,88 @@ export async function POST(request: Request) {
   try {
     const { bookTitle, bookAuthor, bookGenre, bookDescription } = await request.json();
     
-    if (!bookTitle) {
+    if (!bookTitle || !bookAuthor) {
       return NextResponse.json(
-        { error: "Book title is required" },
+        { error: "Book title and author are required" },
         { status: 400 }
       );
     }
     
+    // Check authentication status
     const cookieStore = cookies();
     const accessToken = cookieStore.get("spotify_access_token")?.value;
     const isAuthenticated = !!accessToken;
     
+    console.log("Generating playlist for:", bookTitle);
+    
     // Generate search queries based on book information
     const searchQueries = [
-      `${bookTitle} ${bookAuthor || ""}`,
+      `${bookTitle} ${bookAuthor}`,
       bookGenre || "",
-      ...bookDescription?.split(/\s+/).slice(0, 10) || []
+      ...(bookDescription ? 
+        bookDescription.split(" ").slice(0, 5).join(" ") : 
+        []
+      )
     ].filter(query => query.trim().length > 0);
     
     console.log("Search queries:", searchQueries);
     
-    // Generate tracks using mock data (for all users)
-    const mockTracks = generateMockTracks(searchQueries, bookGenre || "");
-    console.log(`Generated ${mockTracks.length} tracks`);
+    // Search for tracks using the user's token or a server token
+    const trackPromises = searchQueries.map(query => 
+      searchSpotifyTracks(query, 5, accessToken)
+    );
+    const trackResults = await Promise.all(trackPromises);
+    
+    // Flatten and shuffle the results, ensuring we only include songs
+    const allTracks = trackResults.flat();
+    const shuffledTracks = allTracks
+      .filter(track => track && track.type === "track") // Extra safety check
+      .sort(() => Math.random() - 0.5)
+      .slice(0, 20);
+    
+    console.log("Found tracks:", shuffledTracks.length);
+    
+    if (shuffledTracks.length === 0) {
+      // Fall back to mock tracks if no Spotify tracks are found
+      return NextResponse.json(
+        { error: "No tracks found for the given book" },
+        { status: 404 }
+      );
+    }
+    
+    // Format tracks in our standard format
+    const formattedTracks: Track[] = shuffledTracks.map(track => ({
+      name: track.name,
+      artist: track.artists[0].name,
+      album: track.album.name,
+      image: track.album.images[0]?.url,
+      uri: track.uri,
+    }));
     
     if (isAuthenticated) {
-      // Authenticated user flow - create actual Spotify playlist from the same tracks
-      console.log("Creating Spotify playlist for authenticated user");
-      
+      // Create a real Spotify playlist for authenticated users
       try {
-        // Create a playlist with the mock tracks
         const playlistName = `Bookify: ${bookTitle}`;
         const playlist = await createSpotifyPlaylist(
           playlistName,
-          `A playlist inspired by "${bookTitle}" ${bookAuthor ? `by ${bookAuthor}` : ""}`,
-          mockTracks.map((track) => track.uri),
+          `A playlist inspired by "${bookTitle}" by ${bookAuthor}`,
+          shuffledTracks.map(track => track.uri),
           accessToken
         );
-
+        
         console.log("Playlist created:", playlist.id);
-
-        // Format the response - using the exact same mock tracks for consistency
-        const formattedPlaylist = {
+        
+        // Return formatted response with playlist ID for embedding
+        return NextResponse.json({
           playlistId: playlist.id,
           name: playlistName,
           external_url: playlist.external_urls.spotify,
           uri: playlist.uri,
-          tracks: mockTracks
-        };
-
-        return NextResponse.json(formattedPlaylist);
-      } catch (error: any) {
+          tracks: formattedTracks
+        });
+      } catch (error) {
         console.error("Error creating Spotify playlist:", error);
-        // Fall back to non-authenticated flow if playlist creation fails
-        console.log("Falling back to non-authenticated flow");
+        // If playlist creation fails, fall back to non-authenticated mode
       }
     }
     
@@ -140,16 +168,16 @@ export async function POST(request: Request) {
       name: `Bookify: ${bookTitle}`,
       external_url: "https://open.spotify.com/",
       uri: null,
-      tracks: mockTracks
+      tracks: formattedTracks
     };
     
     console.log(`Returning playlist with ${playlistData.tracks.length} tracks`);
     return NextResponse.json(playlistData);
     
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error generating playlist:", error);
     return NextResponse.json(
-      { error: "Failed to generate playlist" },
+      { error: error.message || "Failed to generate playlist" },
       { status: 500 }
     );
   }
