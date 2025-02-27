@@ -105,9 +105,15 @@ interface MockTrack {
   uri: string;
 }
 
+// At the top of the file, add these constants:
+const AVG_READING_SPEED_WPM = 250; // Average adult reading speed (words per minute)
+const AVG_WORDS_PER_PAGE = 300; // Average words per page in a standard book
+const MIN_PLAYLIST_DURATION_MS = 15 * 60 * 1000; // 15 minutes minimum
+const MAX_PLAYLIST_DURATION_MS = 180 * 60 * 1000; // 3 hours maximum
+
 export async function POST(request: Request) {
   try {
-    const { bookTitle, bookAuthor, bookGenre, bookDescription, bookYear } = await request.json();
+    const { bookTitle, bookAuthor, bookGenre, bookDescription, bookYear, pageCount } = await request.json();
     
     if (!bookTitle || !bookAuthor) {
       return NextResponse.json(
@@ -133,6 +139,10 @@ export async function POST(request: Request) {
       literaryPeriod = getLiteraryPeriod(Number(bookYear));
       console.log("Literary period:", literaryPeriod);
     }
+    
+    // Calculate target playlist duration based on book length
+    const estimatedReadingTime = calculateReadingTime(pageCount);
+    console.log(`Book has ${pageCount} pages, estimated reading time: ${Math.round(estimatedReadingTime/60000)} minutes`);
     
     // Enhanced search queries based on book information and genre
     const searchQueries = generateSearchQueries(
@@ -172,8 +182,14 @@ export async function POST(request: Request) {
       }
     }
     
-    // Limit to top 20 tracks
-    selectedTracks = selectedTracks.slice(0, 20);
+    // Match playlist duration to book reading time
+    selectedTracks = await matchPlaylistDurationToReadingTime(
+      selectedTracks,
+      estimatedReadingTime,
+      accessToken
+    );
+    
+    console.log(`Final playlist has ${selectedTracks.length} tracks with appropriate duration`);
     
     // Format tracks in our standard format
     const formattedTracks: Track[] = selectedTracks.map(track => ({
@@ -184,20 +200,38 @@ export async function POST(request: Request) {
       uri: track.uri,
     }));
     
-    if (isAuthenticated && accessToken) {
+    if (isAuthenticated) {
       // Create a real Spotify playlist for authenticated users
       try {
         const playlistName = `Bookify: ${bookTitle}`;
-        const playlistDescription = generatePlaylistDescription(bookTitle, bookAuthor, normalizedGenre, literaryPeriod);
+        const playlistDescription = `A playlist inspired by "${bookTitle}" by ${bookAuthor}`;
         
+        console.log(`Creating playlist "${playlistName}" with ${selectedTracks.length} tracks`);
+        
+        // Format track URIs correctly and ensure we have valid URIs
+        const trackUris = selectedTracks
+          .filter(track => track && track.uri && track.uri.startsWith('spotify:track:'))
+          .map(track => track.uri);
+        
+        console.log(`Adding ${trackUris.length} track URIs to playlist`);
+        
+        // Create the playlist with tracks
         const playlist = await createSpotifyPlaylist(
           playlistName,
           playlistDescription,
-          selectedTracks.map(track => track.uri),
+          trackUris,
           accessToken
         );
         
-        console.log("Playlist created:", playlist.id);
+        // Verify we got a playlist ID back
+        if (!playlist || !playlist.id) {
+          throw new Error("Failed to create playlist - no ID returned");
+        }
+        
+        console.log("Playlist created successfully with ID:", playlist.id);
+        
+        // Add a small delay to allow Spotify to process the tracks
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
         // Return formatted response with playlist ID for embedding
         return NextResponse.json({
@@ -209,6 +243,7 @@ export async function POST(request: Request) {
         });
       } catch (error) {
         console.error("Error creating Spotify playlist:", error);
+        // If playlist creation fails, fall back to non-authenticated mode
       }
     }
     
@@ -338,10 +373,39 @@ async function searchTracksWithQueries(queries: string[], accessToken?: string) 
     new Map(allTracks.map(track => [track.uri, track]))
   ).map(([_, track]) => track);
   
+  // Filter to ensure we only get actual songs (not podcasts, audiobooks, etc.)
+  const filteredTracks = uniqueTracks.filter(track => {
+    // Basic null check
+    if (!track) return false;
+    
+    // Must be a track type (not episode, audiobook, etc)
+    if (track.type !== "track") return false;
+    
+    // Skip tracks without proper artist info
+    if (!track.artists || !track.artists.length) return false;
+    
+    // Skip tracks without proper album info
+    if (!track.album || !track.album.name) return false;
+    
+    // Skip if the URI doesn't start with spotify:track:
+    if (!track.uri || !track.uri.startsWith('spotify:track:')) return false;
+    
+    // Skip tracks that might be podcast episodes (optional)
+    const lowerName = track.name.toLowerCase();
+    if (
+      lowerName.includes('podcast') || 
+      lowerName.includes('episode') || 
+      lowerName.includes('interview') ||
+      track.album.name.toLowerCase().includes('podcast')
+    ) {
+      return false;
+    }
+    
+    return true;
+  });
+  
   // Shuffle tracks
-  return uniqueTracks
-    .filter(track => track && track.type === "track")
-    .sort(() => Math.random() - 0.5);
+  return filteredTracks.sort(() => Math.random() - 0.5);
 }
 
 // Enhance track selection using audio features
@@ -630,4 +694,89 @@ function generateMockTracks(searchQueries: string[], genre: string) {
   }
   
   return selectedTracks.length > 0 ? selectedTracks : FALLBACK_TRACKS;
+}
+
+// Add these new functions for calculating reading time and matching durations
+
+// Calculate estimated reading time based on page count
+function calculateReadingTime(pageCount: number): number {
+  if (!pageCount || pageCount <= 0) {
+    // Default to a 30-minute playlist for unknown book length
+    return 30 * 60 * 1000; 
+  }
+  
+  // Calculate estimated words in the book
+  const totalWords = pageCount * AVG_WORDS_PER_PAGE;
+  
+  // Calculate reading time in milliseconds
+  let readingTimeMs = (totalWords / AVG_READING_SPEED_WPM) * 60 * 1000;
+  
+  // Apply limits to keep playlist length reasonable
+  readingTimeMs = Math.max(MIN_PLAYLIST_DURATION_MS, readingTimeMs);
+  readingTimeMs = Math.min(MAX_PLAYLIST_DURATION_MS, readingTimeMs);
+  
+  return readingTimeMs;
+}
+
+// Match the playlist duration to the estimated reading time
+async function matchPlaylistDurationToReadingTime(
+  tracks: any[],
+  targetDurationMs: number,
+  accessToken?: string
+): Promise<any[]> {
+  if (!accessToken || tracks.length === 0) {
+    return tracks.slice(0, 20); // Default behavior without token
+  }
+  
+  try {
+    // Get track durations
+    const trackIds = tracks.map(track => track.id);
+    const audioFeatures = await getAudioFeatures(trackIds, accessToken);
+    
+    // Get full track details for duration
+    const tracksWithDuration = await getTracksDetails(trackIds, accessToken);
+    
+    // Create a map of track ID to duration
+    const durationMap = new Map();
+    tracksWithDuration.forEach(track => {
+      if (track && track.id && track.duration_ms) {
+        durationMap.set(track.id, track.duration_ms);
+      }
+    });
+    
+    // Sort tracks by score (from audio features) if available
+    const sortedTracks = [...tracks].sort((a, b) => {
+      const scoreA = (a.score !== undefined) ? a.score : 0;
+      const scoreB = (b.score !== undefined) ? b.score : 0;
+      return scoreB - scoreA; // Higher scores first
+    });
+    
+    // Select tracks until we reach the target duration
+    const selectedTracks = [];
+    let currentDuration = 0;
+    
+    for (const track of sortedTracks) {
+      const trackDuration = durationMap.get(track.id) || 0;
+      
+      // Always include at least 5 tracks regardless of duration
+      if (selectedTracks.length < 5 || currentDuration < targetDurationMs) {
+        selectedTracks.push(track);
+        currentDuration += trackDuration;
+      } else {
+        break;
+      }
+      
+      // Cap at 50 tracks max for reasonable playlist size
+      if (selectedTracks.length >= 50) {
+        break;
+      }
+    }
+    
+    console.log(`Target duration: ${Math.round(targetDurationMs/60000)} minutes, actual: ${Math.round(currentDuration/60000)} minutes`);
+    return selectedTracks;
+    
+  } catch (error) {
+    console.error("Error matching playlist duration:", error);
+    return tracks.slice(0, 20); // Fallback
+  }
 } 

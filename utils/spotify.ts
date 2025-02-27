@@ -37,8 +37,16 @@ export async function searchSpotifyTracks(query: string, limit = 10, accessToken
     return [];
   }
   
+  // Explicitly restrict search to track type
+  const searchParams = new URLSearchParams({
+    q: query,
+    type: 'track',
+    limit: limit.toString(),
+    market: 'US'  // Add market for better results
+  });
+  
   const response = await fetch(
-    `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=${limit}`,
+    `https://api.spotify.com/v1/search?${searchParams.toString()}`,
     {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -52,6 +60,13 @@ export async function searchSpotifyTracks(query: string, limit = 10, accessToken
   }
   
   const data = await response.json();
+  
+  // Ensure we have track items before returning
+  if (!data.tracks || !Array.isArray(data.tracks.items)) {
+    console.warn("No track items found in response");
+    return [];
+  }
+  
   return data.tracks.items;
 }
 
@@ -61,6 +76,10 @@ export async function createSpotifyPlaylist(
   trackUris: string[],
   accessToken: string
 ) {
+  if (!trackUris.length) {
+    console.warn("No track URIs provided for playlist creation");
+  }
+  
   // Get user ID
   const userResponse = await fetch("https://api.spotify.com/v1/me", {
     headers: {
@@ -69,6 +88,8 @@ export async function createSpotifyPlaylist(
   });
   
   if (!userResponse.ok) {
+    const errorText = await userResponse.text();
+    console.error("Failed to get user profile:", errorText);
     throw new Error("Failed to get user profile");
   }
   
@@ -93,29 +114,44 @@ export async function createSpotifyPlaylist(
   );
   
   if (!createResponse.ok) {
+    const errorText = await createResponse.text();
+    console.error("Failed to create playlist:", errorText);
     throw new Error("Failed to create playlist");
   }
   
   const playlist = await createResponse.json();
+  console.log(`Created playlist: ${playlist.id} with name: ${playlist.name}`);
   
-  // Add tracks to playlist
+  // Add tracks to playlist - only if we have track URIs
   if (trackUris.length > 0) {
-    const addTracksResponse = await fetch(
-      `https://api.spotify.com/v1/playlists/${playlist.id}/tracks`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          uris: trackUris,
-        }),
-      }
-    );
+    console.log(`Adding ${trackUris.length} tracks to playlist ${playlist.id}`);
     
-    if (!addTracksResponse.ok) {
-      throw new Error("Failed to add tracks to playlist");
+    try {
+      const addTracksResponse = await fetch(
+        `https://api.spotify.com/v1/playlists/${playlist.id}/tracks`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            uris: trackUris,
+          }),
+        }
+      );
+      
+      if (!addTracksResponse.ok) {
+        const errorText = await addTracksResponse.text();
+        console.error("Failed to add tracks to playlist:", errorText);
+        throw new Error("Failed to add tracks to playlist");
+      }
+      
+      const addTracksResult = await addTracksResponse.json();
+      console.log("Tracks added successfully:", addTracksResult);
+    } catch (error) {
+      console.error("Error adding tracks:", error);
+      // Still return the playlist even if adding tracks fails
     }
   }
   
@@ -156,6 +192,39 @@ export async function getAudioFeatures(trackIds: string[], accessToken: string) 
       }
     } else {
       console.error("Failed to fetch audio features:", await response.text());
+    }
+  }
+  
+  return results;
+}
+
+export async function getTracksDetails(trackIds: string[], accessToken: string) {
+  if (!trackIds.length) return [];
+  
+  // Spotify API limits to 50 IDs per request
+  const batchSize = 50;
+  const results = [];
+  
+  for (let i = 0; i < trackIds.length; i += batchSize) {
+    const batch = trackIds.slice(i, i + batchSize);
+    const idsString = batch.join(',');
+    
+    const response = await fetch(
+      `https://api.spotify.com/v1/tracks?ids=${idsString}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }
+    );
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.tracks) {
+        results.push(...data.tracks);
+      }
+    } else {
+      console.error("Failed to fetch track details:", await response.text());
     }
   }
   

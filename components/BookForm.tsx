@@ -15,6 +15,8 @@ interface BookSuggestion {
   description: string
   genre: string
   thumbnail: string
+  pageCount?: number
+  publishedDate?: string
 }
 
 interface Track {
@@ -117,7 +119,9 @@ export default function BookForm() {
             author: item.volumeInfo.authors ? item.volumeInfo.authors[0] : "Unknown Author",
             description: item.volumeInfo.description || "",
             genre: item.volumeInfo.categories ? item.volumeInfo.categories[0] : "",
-            thumbnail: item.volumeInfo.imageLinks?.thumbnail || ""
+            thumbnail: item.volumeInfo.imageLinks?.thumbnail || "",
+            pageCount: item.volumeInfo.pageCount,
+            publishedDate: item.volumeInfo.publishedDate
           }))
           
           setSuggestions(formattedSuggestions)
@@ -196,6 +200,8 @@ export default function BookForm() {
             bookAuthor: selectedBook.author,
             bookGenre: selectedBook.genre,
             bookDescription: selectedBook.description,
+            pageCount: selectedBook.pageCount || 0,
+            bookYear: selectedBook.publishedDate
           }),
         });
         
@@ -362,7 +368,19 @@ export default function BookForm() {
           
           {/* Spotify playlist or track list */}
           <Card className="p-4">
-            {playlistData ? (
+            {isGenerating ? (
+              // Show loading state for playlist generation
+              <>
+                <h3 className="text-lg font-semibold mb-2">
+                  {isAuthenticated ? "Book Playlist" : "Suggested Tracks"}
+                </h3>
+                <div className="flex flex-col items-center justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-[#1DB954] mb-4" />
+                  <p className="text-gray-600">Generating your playlist...</p>
+                </div>
+              </>
+            ) : playlistData ? (
+              // Show playlist when data is available
               <>
                 <h3 className="text-lg font-semibold mb-2">
                   {isAuthenticated ? "Book Playlist" : "Suggested Tracks"}
