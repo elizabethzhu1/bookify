@@ -260,7 +260,7 @@ export default function BookForm() {
                   onChange={handleInputChange}
                   onFocus={handleInputFocus}
                   placeholder="Search for a book..."
-                  className="w-full bg-white text-black placeholder-gray-400 border-gray-300 focus:border-[#1DB954] transition-colors duration-200 pl-10"
+                  className="w-full bg-white text-black placeholder-gray-400 border-gray-300 focus:border-[#1DB954] transition-colors duration-200 pl-10 py-5 text-lg"
                   ref={inputRef}
                 />
                 {selectedBook && selectedBook.thumbnail && (
@@ -286,11 +286,11 @@ export default function BookForm() {
             >
               {isGenerating ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="mr-2 h-5 w-4 animate-spin" />
                   Generating...
                 </>
               ) : (
-                "Generate"
+                "Generate Playlist"
               )}
             </Button>
           </div>
@@ -381,15 +381,17 @@ export default function BookForm() {
                 
                 {isAuthenticated && playlistData.playlistId ? (
                   // Authenticated user - show embedded playlist
-                  <div className="aspect-video">
+                  <div className="w-full h-[380px]">
                     <iframe
                       src={`https://open.spotify.com/embed/playlist/${playlistData.playlistId}`}
                       width="100%"
                       height="380"
                       frameBorder="0"
                       allowTransparency={true}
-                      allow="encrypted-media"
+                      allow="encrypted-media autoplay"
+                      loading="lazy"
                       className="rounded-md"
+                      style={{ border: 'none', width: '100%', height: '380px' }}
                     ></iframe>
                   </div>
                 ) : (
@@ -425,7 +427,7 @@ export default function BookForm() {
                         ))
                       ) : (
                         <div className="text-center py-2 text-gray-500">
-                          No tracks available for this playlist.
+                          Connect with Spotify to generate a playlist.
                         </div>
                       )}
                     </div>

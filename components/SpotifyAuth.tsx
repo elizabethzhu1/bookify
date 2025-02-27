@@ -65,41 +65,47 @@ export default function SpotifyAuth() {
 
   if (isLoading) {
     return (
-      <Button variant="outline" disabled className="bg-gray-700 text-gray-300">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        Checking...
-      </Button>
+      <div className="mb-2">
+        <Button variant="outline" disabled className="bg-gray-700 text-gray-300">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Checking...
+        </Button>
+      </div>
     )
   }
 
   if (isAuthenticated) {
     return (
-      <Button 
-        variant="outline" 
-        onClick={handleDisconnect}
-        disabled={isDisconnecting}
-        className="bg-red-600 hover:bg-red-700 text-white border-none"
-      >
-        {isDisconnecting ? (
-          <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Disconnecting...
-          </>
-        ) : (
-          "Disconnect from Spotify"
-        )}
-      </Button>
+      <div className="mb-2">
+        <Button 
+          variant="outline" 
+          onClick={handleDisconnect}
+          disabled={isDisconnecting}
+          className="bg-red-600 hover:bg-red-700 text-white border-none"
+        >
+          {isDisconnecting ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Disconnecting...
+            </>
+          ) : (
+            "Disconnect from Spotify"
+          )}
+        </Button>
+      </div>
     )
   }
 
   return (
-    <Button 
-      variant="outline" 
-      onClick={handleConnect}
-      className="bg-[#1DB954] hover:bg-[#1ed760] text-white border-none"
-    >
-      Connect with Spotify
-    </Button>
+    <div className="mb-2">
+      <Button 
+        variant="outline" 
+        onClick={handleConnect}
+        className="bg-[#1DB954] hover:bg-[#1ed760] text-white border-none"
+      >
+        Connect with Spotify
+      </Button>
+    </div>
   )
 }
 

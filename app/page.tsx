@@ -34,7 +34,7 @@ export default function Home({
           </div>
         )}
       </div>
-      <div className="p-8">
+      <div className="p-5">
         <BookForm />
         <div className="mt-8 grid md:grid-cols-2 gap-8">
           <BookInfo />

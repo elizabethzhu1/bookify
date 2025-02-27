@@ -3,6 +3,7 @@ import "./globals.css"
 import type { Metadata } from "next"
 import { Poppins } from "next/font/google"
 import { AppProvider } from "@/context/AppContext"
+import { Inter } from 'next/font/google'
 
 const poppins = Poppins({
   subsets: ["latin"],
@@ -11,9 +12,14 @@ const poppins = Poppins({
   variable: "--font-poppins",
 })
 
+const inter = Inter({
+  subsets: ['latin'],
+  display: 'swap',
+})
+
 export const metadata: Metadata = {
-  title: "Bookify",
-  description: "Generate a Spotify playlist based on your book",
+  title: "Bookify - Book-Inspired Spotify Playlists",
+  description: "Generate Spotify playlists based on your favorite books",
     generator: 'v0.dev'
 }
 
@@ -23,14 +29,24 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={poppins.variable}>
+    <html lang="en" className={`${poppins.variable} ${inter.className}`}>
+      <head>
+        <link 
+          rel="preconnect" 
+          href="https://open.spotify.com" 
+          crossOrigin="anonymous" 
+        />
+        <link 
+          rel="preconnect" 
+          href="https://i.scdn.co" 
+          crossOrigin="anonymous" 
+        />
+      </head>
       <body className={`${poppins.className} antialiased`}>
         <AppProvider>{children}</AppProvider>
       </body>
     </html>
   )
 }
-
-
 
 import './globals.css'
